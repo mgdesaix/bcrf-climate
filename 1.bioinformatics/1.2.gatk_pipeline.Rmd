@@ -1,0 +1,611 @@
+---
+title: "GATK pipeline"
+author: "Matt DeSaix"
+output: html_notebook
+---
+
+This script is for creating a GATK pipeline that produces a nice and tidy vcf file from bam files.  I'm doing this for some whole genome sequence data of *Setophaga ruticilla* and want that nice GATK vcf file instead of ANGSD's vcf file (which apparently is sub-optimal). One tricky part is I'm trying to do this FAST by breaking up the bam files by the scaffolds in order to run lots of small jobs quickly. However, GATK is *mildly* confusing and this is my first run through with it so we'll see how it goes.  I'm currently using GATK version 4.1.4.0 and have already found that googling tools can be an issue because older documentation comes up first and typically doesn't work because things have changed.  Keep this in mind...
+
+Software I use:
+
+- GATK4 (ver 4.1.4.0)
+
+- bcftools (ver 1.9)
+
+- samtools (ver 1.9)
+
+- htslib (ver 1.9)
+
+Below I outline my workflow for obtaining a final VCF file (Part 1) and also the more *headache-y* workflow for getting gvcf file intermediaries (Part 2) which are supposed to speed things up if you plan on adding more sequences down the line (avoids having the go back to the bamfiles, but my experience suggests this method may still be a pain unless you are routinely updating massive sample sizes)
+
+## Part 1) Create VCF file
+
+The main workflow of scripts I have for this is (and in the following order):
+
+1) vcf.1.haplotypecaller.sbatch
+
+2) vcf.2.gathervcfs.sbatch
+
+3) vcf.3.bcftools-filter.sbatch
+
+4) vcf.4.bcftools-query-allele-depths.sbatch
+
+
+The information below details what's in these scripts as well as some additional steps you need to do to make it all work.
+
+### 1a) Haplotype Caller
+
+Ok, check out the documentation for HaplotypeCaller.  You need to provide your reference genome (-R), your input bam file (-I), your output file (-O), and then provide the interval list (-L).  The interval list file has to end with ".list" file extension.  To make this run faster I'm going to break up the job based on 4mb scaffold windows.
+
+Get the scaffold list from a bam file:
+
+```bash
+# Check the names of the reference sequence
+$ samtools idxstats ./bamfiles/Plate3.DNASERU9037_RG.bam | head -n 3
+# in this case it's scaffold, so you can add that to the following code
+$ samtools idxstats ./bamfiles/Plate3.DNASERU9037_RG.bam | grep 'scaffold' | awk '{print $1, $2}' > scaffold-lengths.txt
+```
+
+Now you have the file *scaffold-lengths.txt* which has all of your different scaffold names and their length (bp).  
+
+
+
+### Split up intervals of scaffolds
+
+Scaffolds can have crazy long lengths of >100 MB which then is a nightmare for getting jobs to run in a reasonable amount of time.  Eric resolved this issue for me with some awk code.  This code splits up intervals into 2 mb chunks...so amazing. Gotta become an awk wizard.
+
+```bash
+$ cat scaffold-lengths.txt | awk '{tot=0; while(tot<$2) {start=tot+1; tot+=2e6; if(tot>$2) tot=$2; printf("%d\t%s:%d-%d\n",++n, $1,start,tot);}}' > ./intervals/intervals4mb.test.txt
+```
+
+#### Preparing the reference genome
+
+Note: You need to make sure your reference genome has a dictionary and is indexed before running haplotypecaller. You can do so with the following commands.
+
+```bash
+## create .dict file
+$ java -jar ~/programs/picard.jar CreateSequenceDictionary R=your.reference.genome.fasta
+# create .fai file
+$ samtools faidx your.reference.genome.fasta
+```
+
+Now that all that is done, I can run gatk's ```HaplotypeCaller```.  
+
+### Haplotypecaller
+
+```bash
+#!/bin/bash
+#################
+#SBATCH --job-name=haplotypeCaller
+#SBATCH --output=./err-out/haplotypeCaller.%j.out
+#SBATCH --error=./err-out/haplotypeCaller.%j.err
+#################
+#SBATCH -t 24:00:00
+#SBATCH --qos=normal
+#SBATCH --partition=shas
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node 4
+#SBATCH --mem=16G
+#SBATCH --mail-type=FAIL
+#SBATCH  --mail-user=mgdesaix@gmail.com
+#################
+#echo commands to stdout
+set -x
+##################
+
+mkdir err-out
+module load jdk
+
+bams=bams.0.1.norelate.list
+# for interval in `ls /projects/mgdesaix\@colostate.edu/AMRE/gatk/scaffold-dir/Interval.6mb.*`; do sbatch 1.haplotypeCaller.vcf.sbatch $interval; done               
+interval=$1
+# edit this part accordingly to extract the Interval name ex. Interval.6mb.001
+intervalName=`echo $1 | cut -f7 -d'/' | cut -f1,2,3 -d'.'`
+
+reference=/projects/mgdesaix@colostate.edu/reference/YWAR.fa
+# out directory
+out=/scratch/summit/mgdesaix@colostate.edu/AMRE/gatk/haplotypecaller/vcf
+ofile="$out"/pre-snip.AMRE."$intervalName".vcf.gz
+nfile="$out"/AMRE."$intervalName".vcf.gz
+
+cd /projects/mgdesaix@colostate.edu/AMRE/bamfiles
+
+gatk --java-options "-Xmx12g" \
+    HaplotypeCaller \
+    -R "$reference" \
+    -I "$bams" \
+    -O "$ofile" \
+    -L "$interval"
+
+bcftools view -o "$nfile" -O z "$ofile"
+bcftools index -f -t "$nfile"
+```
+
+Then I will use ```gatk GatherVcfs``` to combine the vcf files into the one master file:
+
+```bash
+# Run a batch script from folder with all of the vcfs and the list
+# Script set up for the following naming convention of the list, edit accordingly
+# AMRE.Interval.6mb.0.5x.list
+vcfs=$1
+# this gets the coverage ex. 0.5x, includes in the name of the file
+cov=`echo $vcfs | cut -f4,5 -d'.'`
+ofile=AMRE.full."$cov".6mb.vcf.gz
+
+gatk --java-options "-Xmx12g" \
+    GatherVcfs \
+    -I "$vcfs" \
+    -O "$ofile"
+```
+
+As in other functions in ```gatk```, the input is a text file saved with the suffix *.list*, created via:
+
+``` ls *.vcf.gz > AMRE.vcf.list```
+
+Or however.  Just double-check that the number of input vcf files add up to the number of intervals you created before. GatherVcfs should only take a minute or two. Then you'll want to filter the vcf file with bcftools.  Also, pulling out the Allele Depths gives you the requisite info to do the single read sampling for PCA.
+
+```bash
+# filters to min and max of two alleles and between 0.05 and 0.95 minor allele freq
+# also filters out variants that are missing from more than 50% of individuals
+$ bcftools view -m 2 -M 2 --min-af 0.05 -O z --max-af 0.95 -i 'F_MISSING < 0.5 & QUAL > 30' raw.vcf > filtered.vcf
+$ bcftools index -f -t filtered.vcf
+$ bcftools query -f '%CHROM\t %POS [\t%AD]\n' filtered.vcf > allele_depths.txt
+```
+
+If you ever need to check if a file is actually .gz compressed, the start of the file should have the bytes ```0x1f8b```, you can check this with the command 
+```bash
+xxd file-name | head n -1
+```
+
+The allele depth values will be a dot, ".", if missing or have the reference/alt counts i.e. 0,1 or 2,1 etc.
+If you want to see the unique allele depth value for a column, you can do the following.  I did this when seeing if there was anything other than missing data on the test runs I did.  Here I am checking out the 3rd column. Column1 = scaffold, column2 = position.
+```bash 
+$ awk -F '\t' '{print $3}' allele_depths.txt | sort | uniq
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Part 2) Create GVCF intermediaries pipeline - attempt not completed
+I'm also going to be using the g.vcf file format for the intermediaries because *supposedly* this is a more efficient method when you know you have to add more data later on.  We'll see.
+
+So far the process I have outlined is:
+
+1) HaplotypeCaller - create g.vcf files from bam files, break up individuals into multiples
+
+2) GatherVcfs - merge individuals' different g.vcf files into 1 per individual...heads up, extension matters. Don't repeat the mistake of naming them ".gvcf", **use ".g.vcf"**.
+
+3) GenomicsDBImport - create database for all individuals. The database is recommended over using CombineGVCFs, unless the former is unable to work. 
+
+4) GenotypeGVCFs - create vcf from database
+
+### 2a) HaplotypeCaller
+Checking how many scaffolds/chromosomes/etc are in the bam files, mine are in the format of ```scaffold1|size123456```:
+
+```sh 
+$ samtools idxstats Plate1.18N00490_RG.bam | wc -l
+18415 
+```
+I have 18415 scaffolds. Now to create a list of them:
+
+```sh 
+$ samtools idxstats Plate1.18N00490_RG.bam | cut -f1 > scaffold-full.txt
+```
+
+Unfortunately, I found that "*" was added to the last line of the ```scaffold-full.txt file```, causing haplotypeCaller to fail because of an invalid interval.  So I guess I actually have 18414 scaffolds. Not sure if it's always present, but you can check:
+
+```bash
+$ tail scaffold-full.txt -n 3
+scaffold47060|size9013
+scaffold47992|size8514
+*
+```
+
+There it is! And delete!:
+
+```bash
+$ sed '$d' scaffold-full.txt > new-scaffold-full.txt
+```
+
+Note that '$' denotes the last line for ```sed```, thereby deleting it when you specify 'd'.
+
+Okay, now to break that up into smaller scaffold lists so we can send smaller jobs to haplotypecaller!! Note: probably a better way to do this that would minimize extraneous files but hell, if I can get this to work right now, then cool. How about we break up the scaffolds into chunks each with 500 lines (37 chunks):
+
+```bash 
+$ split -l 500 scaffold-full.txt scaffold-list
+```
+The code above will break up the scaffold-full.txt file into 37 chunks, the last one not having the full 500 lines because 18414/500 is not an integer.  I set the prefix of all the split files as ```scaffold-list```, which means split will tack on "aa", "ab", "ac", etc. to that prefix.
+
+Tack on the .list extension, which is crucial for haplotypecaller
+
+```bash 
+# I purposely made the prefix different than the full list so I would only add list to the appropriate files
+$ for file in scaffold-list*; do mv "$file" "$file.list"; done
+```
+
+Check out all the sweet files produced!
+
+**-------------------------------NOTE-------------------------------** 
+
+After having run some initial files, I have found my earlier scaffolds have way more data and take forever. This results in the upper method taking a long time (i.e. > 5 hours) for the first intervals, and really quick (< 15 min.) for later intervals.  If this is not relevant to your data, skip the note and just break it up uniformly because that is less work, which is nice. Here you can see some examples of my data taking a while to run:
+```bash
+$ grep 'Traversal complete\|+ listSub=' *.err
+haplotypeCaller.3584855.err:+ listSub=listaa
+haplotypeCaller.3584856.err:+ listSub=listab
+haplotypeCaller.3584857.err:+ listSub=listac
+haplotypeCaller.3584857.err:19:01:32.080 INFO  ProgressMeter - Traversal complete. Processed 700588 total regions in 212.4 minutes.
+haplotypeCaller.3584858.err:+ listSub=listad
+haplotypeCaller.3584858.err:17:33:10.964 INFO  ProgressMeter - Traversal complete. Processed 433073 total regions in 124.0 minutes.
+haplotypeCaller.3584859.err:+ listSub=listae
+haplotypeCaller.3584859.err:16:47:29.606 INFO  ProgressMeter - Traversal complete. Processed 287229 total regions in 78.3 minutes.
+haplotypeCaller.3584860.err:+ listSub=listaf
+haplotypeCaller.3584860.err:16:23:39.194 INFO  ProgressMeter - Traversal complete. Processed 203658 total regions in 54.0 minutes.
+haplotypeCaller.3584861.err:+ listSub=listag
+haplotypeCaller.3584861.err:16:07:40.022 INFO  ProgressMeter - Traversal complete. Processed 149524 total regions in 38.0 minutes.
+```
+
+Above, the intervals decrease exponentially in time.  I cancelled these jobs at around 5 hours and *aa* and *ab* (the first 2) hadn't completed yet so there's no time for them.  Following this pattern, aa may have taken around 12 hours, and close to 20 hours in other cases.  To stream line this process, it would be cool to sample exponentially larger intervals to make the initial ones take roughly as long as the later ones (at least not at the magnitude of 20 hours vs 5 minutes).  Since it would be cool, let's do it:
+
+Using an exponential function, $N(t) = ab^t$, we can set our initial conditions with a decent interval, say 80 scaffolds (down from 500 in the uniform run), giving us $N(t) = 80b^t$.  Then we can plug in our final conditions, say interval length 5000 with a total of 25 intervals, to get $5000=80b^{25}$, and then just solve for rate. I then checked it out and modified accordingly to better situate the intervals...this was all done in R, not bash!
+
+```r
+# N(t) = (50)*b^t
+# 5000 = 50*b^25
+# 100 = b^25
+# b = 1.20
+# modify as needed
+
+# Get interval lengths
+exp.counts <- round((80*1.16^(0:24)),0)
+exp.counts
+exp.sum <- c()
+# Convert interval lengths to what the row numbers will actually be
+for(i in 1:length(exp.counts)){
+  exp.sum[i] <- sum(exp.counts[1:i])
+}
+exp.sum
+# This lower code was written as a blueprint for the bash script that actually chopped up the file
+start <- 1
+for(i in 1:length(exp.sum)){
+  end <- start + exp.counts[i]
+  print(paste0("Start: ", start, " and End: ", end))
+  start <- end + 1
+}
+```
+
+Using these intervals it's *straightforward-ish* to then break up the scaffold file with unequal intervals. I just exported the ```exp.counts``` vector from above to my GATK project on Summit, and then did the rest in bash...but we don't get to use the handy bash function ```split```. We'll write our own script
+
+```sh 
+#!/bin/bash
+
+# Keep track of rows
+start=1
+# Keep track of interval number
+counter=1
+while read line
+  do
+    end=$(expr "$start" + "$line")
+    # Create leading 0s in name! Otherwise downstream automation sucks
+    value=$(printf "%02d" $counter)
+    # Note we chop up the full scaffold file take on 'list' as interval file name
+    sed -n "${start},${end}p" scaffold-full.txt > Interval_"$value".list
+    start=$(expr "$end" + 1)
+    counter=$[counter + 1]
+  done < exp-counts.txt
+```
+
+**-------------------------------END NOTE-------------------------------** 
+
+
+Now, I need to run haplotypecaller on individuals for all of these.
+
+I've got haplotypecaller running the small jobs! But the bs part is I was trying to call the sbatch script from a bash file that looped through the individuals and the different intervals, however I couldn't figure it out for the life of me.  Spent hours.  then realized I could just put the nested for loop directly into terminal and then it read it fine. wtf ?!?!. Probably something I don't understand about parent-child variable calling.  What I found that works is (**adjust ```cut``` and other parameters accordingly to different file names!!**):
+
+```bash
+# This works, running it all as one line.
+# make sure to change bam file in first line and scaffold list in second line as needed when testing different batches
+ for bam in `ls ../bamfiles/Plate3.18N*.bam`; do gvcf=`echo "$bam" | cut -f3 -d'/' | cut -f1,2 -d'.'`; \
+ for list in `ls ./scaffold-dir/*.list`; \
+  do listSub=`echo "$list" | cut -f3 -d'/' | cut -c 10-11`; \
+      echo "$bam" "$gvcf" "$list" "$listSub"; \
+   done; done
+```
+
+My ```1.haplotypeCaller.gvcf.sbatch``` file looks like this:
+
+```bash
+#!/bin/bash
+
+#all commands that start with SBATCH contain commands that are just used by SLURM for scheduling
+#################
+#set a job name
+#SBATCH --job-name=haplotypeCaller
+#################
+#a file for job output, you can check job progress for each sample
+#SBATCH --output=./err-out/haplotypeCaller.%j.out
+#################
+# a file for errors from the job for each sample
+#SBATCH --error=./err-out/haplotypeCaller.%j.err
+#################
+#time you think you need; default is one hour
+#in minutes in this case
+#SBATCH -t 12:00:00
+#################
+#Quality of service, set to 'long' for longer than 24 hours (max 7 days)
+#SBATCH --qos=normal
+###################
+#specify partition
+#SBATCH --partition=shas
+#################
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node 1
+#################
+#SBATCH --mem=2G
+#################
+#get emailed about job BEGIN, END, and FAIL
+#SBATCH --mail-type=FAIL
+################
+#SBATCH  --mail-user=mgdesaix@gmail.com
+#################
+#now run normal batch commands
+#echo commands to stdout
+set -x
+##################
+
+module load jdk
+
+bam=$1
+gvcf=$2
+list=$3
+listSub=$4
+
+reference=/projects/mgdesaix@colostate.edu/reference/YWAR.fa
+out=/scratch/summit/mgdesaix@colostate.edu/AMRE/gatk/gvcf
+
+gatk HaplotypeCaller -R "$reference" -I "$bam" -O "$out"/"$gvcf"."$listSub".g.vcf -ERC GVCF -L "$list"
+bgzip "$out"/"$gvcf"."$listSub".g.vcf
+tabix "$out"/"$gvcf"."$listSub".g.vcf.gz
+```
+
+As always, don't trust that everything went smoothly or that SLURM or whatever properly notified you that something failed!! Double-check.  One quick check that all files were produced is to see that there are 25 files for each individual. Here's code that outputs each unique individual and the number of files associated with it.
+
+```bash
+$ for ind in `ls Plate*.gz | cut -f2 -d'.' | sort | uniq` ; do echo "$ind `ls *"$ind"*.gz | wc -l`";done
+9003_RG 15
+9006_RG 13
+9008_RG 25
+...
+```
+
+But that can be a long file (rows = # individuals) and a pain to check if each actually equal 25.  So let's just produce output if there's one that isn't!
+
+```bash
+$ for ind in `ls Plate*.gz | cut -f2 -d'.' | sort | uniq` ; \
+  do count=`ls *"$ind"*.gz | wc -l`; \
+  if [ "$count" -ne 25 ]; \
+  then echo "$ind has only $count files"; \
+  else :; fi; done
+9003_RG has only 12 files
+9006_RG has only 13 files
+9032_RG has only 15 files
+...
+```
+Above we check the number of files and store that as the ```count``` variable, then do a conditional statement.  In Bash, ```:``` indicates do nothing.  End with ```fi```.  My files are actually good, I just ran the above while HaplotypeCaller was running and not done yet.
+
+
+
+## 2b) GatherVcfs
+
+This tool is great and straightforward.  ```GatherVcfs``` combines all the separate g.vcf files for an individual and makes it one g.vcf file.  This is where file extensions matter and you have to make sure the input and the output both have g.vcf, or compressed as g.vcf.gz...but the first time I ran through I did it as gvcf and couldn't figure out why it wasn't working.  As of GATK4 this works for g.vcf files, don't listen to the older forums/docs saying otherwise.
+
+Here you can also provide all of the individual input files as a single ".list" instead of having a single "-I" parameter for each. So I ran a loop like the one below that produced the individual list file and then ran gatherVcfs with that list
+
+```bash
+$ for ind in `ls /scratch/summit/mgdesaix@colostate.edu/AMRE/gatk/gvcf/Plate2* | cut -f8 -d'/' | cut -f1,2 -d'.' | sort | uniq`; \
+    do ls `echo /scratch/summit/mgdesaix@colostate.edu/AMRE/gatk/gvcf/"$ind"*.gz` > /scratch/summit/mgdesaix@colostate.edu/AMRE/gatk/gather-vcf/ind-lists/"$ind".list; \
+    sbatch gatherVcfs.sbatch "$ind" "$ind".list; done
+```
+
+All ```2.gatherVcfs.sbatch``` consisted of was this:
+
+```bash
+#!/bin/bash 
+#
+#all commands that start with SBATCH contain commands that are just used by SLURM for scheduling  
+#################
+#set a job name  
+#SBATCH --job-name=gatherVcfs
+#################  
+#a file for job output, you can check job progress for each sample
+#SBATCH --output=./err-out/gatherVcfs.%j.out
+#################
+# a file for errors from the job for each sample
+#SBATCH --error=./err-out/gatherVcfs.%j.err
+#################
+#time you think you need; default is one hour
+#in minutes in this case
+#SBATCH -t 4:00:00
+#################   
+#Quality of service, set to 'long' for longer than 24 hours (max 7 days)
+#SBATCH --qos=normal
+###################
+#specify partition
+#SBATCH --partition=shas
+#################
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node 1
+#################
+#SBATCH --mem=2G
+#################                                                                   
+#get emailed about job BEGIN, END, and FAIL
+#SBATCH --mail-type=FAIL,END
+################
+#SBATCH  --mail-user=mgdesaix@gmail.com
+#################
+#now run normal batch commands
+#echo commands to stdout
+set -x
+##################  
+
+module load jdk
+
+out=/scratch/summit/mgdesaix@colostate.edu/AMRE/gatk/gather-vcf
+ind=$1
+list=$2
+
+
+gatk GatherVcfs \
+  -I "$out"/ind-lists/"$list" \
+  -O "$out"/"$ind".g.vcf
+```
+
+## 2c) GenomicsDBImport
+
+I had one of these take 33 hours, the rest were under 24 hours
+
+```bash
+#!/bin/bash
+#
+#all commands that start with SBATCH contain commands that are just used by SLURM for scheduling
+#################
+#set a job name
+#SBATCH --job-name=genomicsDbimport
+#################
+#a file for job output, you can check job progress for each sample
+#SBATCH --output=./err-out/genomicsDbimport.%j.out
+#################
+# a file for errors from the job for each sample
+#SBATCH --error=./err-out/genomicsDbimport.%j.err
+#################
+#default is one hour
+#in minutes in this case
+#SBATCH -t 48:00:00
+#################
+#Quality of service, set to 'long' for longer than 24 hours (max 7 days)
+#SBATCH --qos=long
+###################
+#specify partition
+#SBATCH --partition=shas
+#################
+#get emailed about job BEGIN, END, and FAIL
+#SBATCH --mail-type=FAIL
+#################
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node 4
+#################
+#SBATCH --mem=16G
+#################
+#now run normal batch commands
+#echo commands to stdout
+set -x
+##################
+
+module load jdk
+
+list=$1
+interval=`echo "$list" | cut -f3 -d'/' | cut -c 10-11`
+out=/scratch/summit/mgdesaix@colostate.edu/AMRE/gatk/databases
+
+gatk --java-options "-Xmx12g" \
+    GenomicsDBImport \
+    --genomicsdb-workspace-path "$out"/database_"$interval" \
+    --batch-size 50 \
+    -L "$list" \
+    --sample-name-map cohort.sample_map \
+    --tmp-dir /scratch/summit/mgdesaix\@colostate.edu/AMRE/tmp/ \
+    --reader-threads 4
+```
+
+
+## 2d) GenotypeGvcfs
+
+
+
+
+## Random Coool Stuff
+
+
+### Other stuff 
+
+I tried sampling the scaffolds by every nth scaffold to break up the larger initial ones but that wasn't allowed in GatherVcfs because they needed to be in genomic order.  The code I found (found...I couldn't figure it out) was nifty and I don't understand it yet but may be helpful in the future:
+
+```bash
+$ awk '{print > ("interval_"++c".list");c=(NR%n)?c:0}' n=20 scaffold-full.txt
+```
+The above code splits my scaffold-full.txt into 20 different files starting with the prefix ```interval_```.  It hads numbers sequentially for the suffix and then I added leading 0s manually because it's late and I couldn't figure out how within awk. So it goes.
+
+### Stupid reference genome has = sign in it which is not allowed! Gotta fix all the bams
+
+So it was easy enough to replace the = in the fasta reference, but I had to go and do it to the bams.  The best way I found was to use create a new header and use samtools reheader tool.
+
+```bash
+for BAM in *.bam
+do
+     samtools view -H $BAM | sed 's/=/_/' > header_corrected.$BAM
+     samtools reheader  header_corrected.$BAM $BAM > new.bam
+done
+```
+
+I ran the above but did the for loop submitting jobs to slurmmm. What a waste of time though to fix all of that, blech
+
+
+### Here's my antiquated way of dividing up intervals
+I then wrote a script to go through and create a *.list* file for intervals of arbitrary sizes.  I wound up using 6mb as a cutoff by adding up lengths until they equaled something over 6mb, saved that as a list, then went on to create a new list.  Using 6mb intervals gave me 199 different list files. The *.list* files are used as input for HaplotypeCaller in GATK. The interval list creating script (*intervals.sh*) I used is below and it is run as ```bash intervals.sh scaffold-lengths.txt```:
+
+```bash
+#!/bin/bash                                                                                                                                                                               
+
+lines=`cat "$1" | wc -l | cut -f1 -d' '`
+counter=0
+counter2=0
+interval=
+window=0
+while IFS="" read -r p
+do
+    counter=$((counter+1))
+    scaffold=`echo "$p" | cut -f1`
+    length=`echo "$p" | cut -f2`
+    let "window = $window + $length"
+    interval="${interval} ${scaffold}"
+
+    if (( $window > 6000000 )) || (( $counter == $lines )); then
+        counter2=$((counter2+1))
+        value=$(printf "%03d" $counter2)
+        for i in $(echo "$interval" | tr " " "\n")
+        do
+          echo "$i" >> Interval_"$value".list
+        done
+        # echo "$interval" > Interval_"$value".list
+        echo "$interval $window" >> intervals6mb.txt
+        # echo "$lines counter $counter window $window"                                                                                                                                   
+        window=0
+        interval=
+    fi
+
+done < "$1"
+```
+
+Remove leading and trailing white spaces for *intervals6mb.txt*, because the way I did it creates spaces. Each row of this file is the total length of the interval and the names of all the scaffolds in it. The first couple intervals use only 2-3 scaffolds, but by the end, the scaffolds are much smaller and 6mb can comprise of 1,000 scaffolds. 
+
+```bash
+$ cat intervals6mb.txt | sed 's/^[ \t]*//;s/[ \t]*$//' > intervals6mb.tmp.txt
+$ rm intervals6mb.txt
+$ mv ./intervals6mb.tmp.txt ./intervals6mb.txt
+```
+
+

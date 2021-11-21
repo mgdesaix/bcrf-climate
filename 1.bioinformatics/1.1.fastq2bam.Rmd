@@ -1,0 +1,114 @@
+---
+title: "From FASTQ to BAM files"
+output: html_notebook
+---
+
+
+This details the general initial steps I've been using to process the raw whole-genome sequence files for the Rosy-Finch data  
+
+Generally, this has so far looked like:
+
+1) Remove duplicates from PCR amplification
+
+2) Map samples to reference genome
+
+3) Check coverage of bamfiles
+
+
+### 1) Remove duplicates
+
+I've been using the program FastUniq to do this, see the _1.trim.sbatch_ file for the full code.  The gist is that we'll remove the duplicates and then put the new fastq files in a directory called _fastuniq-out_ (make sure to create this directory prior to running).  An example is as follows:
+
+```sh
+#Run in directory where your raw .fq.gz files are
+#for fqgz in `ls *1.fq.gz`; do sbatch 1.trim.amre.sbatch ${fqgz}; done
+
+# Use -p flag so you don't get errors if directory already exists!
+mkdir -p err-out
+
+###Identify program directories
+FASTUNIQ=./programs/FastUniq/source # Directory for fastuniq
+
+outdir=./redo-sequence/fastuniq-out
+### Variables
+# ex. DNASERU3038_CKDL200146239-1a-N701-N507_H772MCCX2_L1_1.fq.gz
+fqgz=${1}
+sample=`echo ${fqgz} | cut -f1 -d'_'`
+fastq=`echo ${fqgz} | cut -f1,2,3,4 -d'_'`
+
+###Remove duplicates (potential PCR artifacts) using fastuniq
+
+	echo ${fastq}_1.fq > pair.${sample}.txt
+	echo ${fastq}_2.fq >> pair.${sample}.txt
+	gunzip ${fastq}_1.fq.gz
+	gunzip ${fastq}_2.fq.gz
+	${FASTUNIQ}/fastuniq -i pair.${sample}.txt -t q -o ${outdir}/${sample}_R1.fastq -p ${outdir}/${sample}_R2.fastq
+	gzip -f ${fastq}_1.fq
+	gzip -f ${fastq}_2.fq
+	gzip -f ${outdir}/${sample}_R1.fastq
+	gzip -f ${outdir}/${sample}_R2.fastq
+	rm pair.${sample}.txt
+```
+
+### 2) Map to reference
+
+I align samples to the reference genome with BWA and then add all of the appropriate read group information.  To do this your reference genome needs to be indexed - I use the index function from BWA:
+
+```sh
+$ bwa index ROFI_YwTfa_filtered.fasta
+```
+
+Then, I run through the _2.map.sbatch_ script. Here, we'll take the files from the _fastuniq-out_ directory and put them in a new directory called _dedup_ (create directory before running!). Delete all the files starting with _aln*_ when it has successfully completed.
+
+```sh
+# Run sbatch in for loop for each pair, ex. 18N03686_L3_R1.fastq.gz, set the plate as needed
+# for fq in `ls *R1.fastq.gz`; do sbatch 2.map.sbatch ${fq} Plate1; done
+
+##Variables
+# ex. 18N03686_L3_R1.fastq.gz
+input=${1}
+# ex. Plate1
+plate=${2}
+
+# RGID - read group ID
+sampleLane=`echo ${input} | cut -f1,2 -d'_'` # ex. 18N03686_L3
+rgid=${plate}.${sampleLane} # ex. Plate1.18N03686_L3
+# RGLB - read group library
+rglb=${plate} # ex. Plate1
+# RGPU - read group platform unit
+rgpu=${rgid} # same as rgid
+# RGSM - read group sample...I'm going to remove that s from the old one
+rgsm=`echo ${input} | cut -f1 -d'_'` # 18N03686
+# Output
+output=${rgid}_RG.bam
+
+BWA=~/programs/bwa
+reference=./reference/ROFI/ROFI_YwTfa_filtered.fasta
+
+${BWA}/bwa mem -t 2 ${reference} ./${sampleLane}_R1.fastq.gz ./${sampleLane}_R2.fastq.gz > ../bwa_dedup/aln_${rgid}.sam
+
+cd ../bwa_dedup
+~/programs/samtools-1.9/samtools sort -o aln_${rgid}.bam aln_${rgid}.sam
+java -jar ~/programs/picard.jar AddOrReplaceReadGroups INPUT=aln_${rgid}.bam RGID=${rgid} RGLB=${rglb} RGPL=illumina RGPU=${rgpu} RGSM=${rgsm} OUTPUT=${output} VALIDATION_STRINGENCY=SILENT
+~/programs/samtools-1.9/samtools index ${output}
+```
+
+### 3) Check coverage
+
+Now we've got some sweet bamfiles, let's check how coverage depth is across them.  Hopefully no individuals are woefully inadequate. See the script _3.coverage.genomcov.sbatch_.
+
+```sh
+# Run in directory with bamfiles
+
+sample=${1}
+
+touch cov/covSummary.genomecov.txt
+touch cov/covSummary.genomecov.rm0.txt
+
+bedtools genomecov -d -ibam ${sample}  > cov/${sample}_cov.genomecov.txt
+awk '{if($3<500) {total+=$3; ++lines}} END {print FILENAME," ",total/lines}' cov/${sample}_cov.genomecov.txt >> cov/covSummary.genomecov.txt
+cat cov/${sample}_cov.genomecov.txt|awk '$3!=0{print$0}'|awk '{if($3<500) {total+=$3; ++lines}} END {print FILENAME," ",total/lines}' cov/${sample}_cov.genomecov.txt >> cov/covSummary.genomecov.rm0.txt
+
+rm cov/${sample}_cov.genomecov.txt
+```
+
