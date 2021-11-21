@@ -1,2 +1,2 @@
 # bcrf-climate
-Bioinformatics and analysis scripts for Brown-capped Rosy-Finch climate change project
+Bioinformatics and analysis scripts for Brown-capped Rosy-Finch (*Leucosticte australis*) climate change project
