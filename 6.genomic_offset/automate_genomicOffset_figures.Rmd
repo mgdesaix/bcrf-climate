@@ -1,0 +1,145 @@
+---
+title: "Automate genomic offset BCRF figures"
+author: "Matt DeSaix"
+date: "11/20/2021"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+library(gradientForest)
+library(raster)
+library(rgdal)
+library(ggpattern)
+library(RColorBrewer)
+library(viridis)
+library(ggspatial)
+```
+
+
+```{r}
+sdm.breeding.shp <- readOGR(dsn = "~/Desktop/biomod2/output/adaptwest/top6/current_shapefile")
+states.shp <- readRDS("../SDMs/data/states.cropped.shp.rds")
+domain <- c(
+  xmin = -110, 
+  xmax = -104,
+  ymin = 36,
+  ymax = 42
+)
+```
+
+
+read in data for elevation background
+
+```{r}
+# bcrf.sites <- read_csv("../data/rofi-sites.csv") %>%
+#   add_column(Pop = c("DECA", "EBMO", "ENMO", "HOBA",
+#                      "HUBA", "LMIN", "LAAG", "LMIN",
+#                      "MTEV", "MOMA", "PIPE", "SNRA",
+#                      "VILA", "WHMO"), .before = 1) %>%
+#   filter(!Pop %in% c("HUBA", "VILA", "WHMO"))
+elev <- raster("./ROFI/analysis//data/gradient-forest/cropped/historical/wc2.1_30s_elev.cropped.asc") %>%
+  crop(y = domain)
+
+crs(elev) <- "+init=epsg:4326"
+dsm.hill.ras <- hillShade(terrain(elev,opt='slope'), 
+                      terrain(elev,opt='aspect'),
+                      angle = 40, direction = 270)
+dsm.hill <- dsm.hill.ras %>%
+  rasterToPoints() %>%
+  data.frame()
+gg.elev <- elev %>%
+  rasterToPoints() %>%
+  data.frame()
+colnames(gg.elev) <- c("x","y", "Elevation")
+```
+
+Get offset values to determine min and max
+
+```{r}
+breaks <- 20
+offset.files <- list.files("./output/genomic_offset", pattern = ".csv", full.names = T)
+offset.df <- data.frame("Lon" = NA, "Lat" = NA, "Offset" = NA, 
+                        "SSPs" = NA, "Years" = NA)
+
+for(i in 1:length(offset.files)){
+  ssps.years <- strsplit(offset.files[i], "[.]") %>% 
+    sapply(., '[[', 6)
+  ssps <- strsplit(ssps.years, "_")[[1]][1]
+  years <- strsplit(ssps.years, "_")[[1]][2]
+  tmp.df <- read_csv(offset.files[i]) %>%
+    add_column("SSPs" = ssps, "Years" = years)
+  offset.df <- rbind(offset.df, tmp.df) %>%
+    drop_na()
+}
+min.offset <- min(offset.df$Offset)
+max.offset <- max(offset.df$Offset)
+low.offset <- paste0("Low \n (", round(min.offset,3), ")")
+high.offset <- paste0("\n High \n (", round(max.offset,3), ")")
+low.offset
+```
+
+## New plot current GV
+
+
+### black and white
+
+```{r}
+breaks <- 20
+for(i in 1:length(offset.files)){
+  ssps.years <- strsplit(offset.files[i], "[.]") %>% 
+    sapply(., '[[', 6)
+  genomic.offset <- read_csv(offset.files[i])
+  rel.min <- min(genomic.offset$Offset)
+  rel.max <- max(genomic.offset$Offset)
+  
+  genomic.offset.pts <- genomic.offset
+  coordinates(genomic.offset.pts) <- ~Lon+Lat
+  proj4string(genomic.offset.pts) <- CRS("+init=epsg:4326")
+  genomic.offset.pts <- spTransform(genomic.offset.pts, crs(sdm.breeding.shp))
+  gridded(genomic.offset.pts) <- TRUE
+  genomic.offset.ras <- raster(genomic.offset.pts)
+  
+  p.current.proj.elev.bw <- ggplot(dsm.hill,aes(x,y)) +
+    layer_spatial(dsm.hill.ras, aes(alpha = stat(band1)), alpha = 1) +
+    scale_fill_gradientn(colors=grey.colors(100, start = 0, end = 0.7), 
+                       guide = F) +
+  scale_alpha(guide=FALSE,range = c(0,1.00)) +
+  ggnewscale::new_scale_fill() +
+  layer_spatial(genomic.offset.ras, aes(fill = stat(band1))) +
+    # geom_tile(data = genomic.offset, aes(Lon, Lat, fill = Offset),
+    #           color = "transparent", height = 0.02, width = 0.02) +
+    scale_fill_gradientn(name = "Genomic \n offset",
+                         colors = turbo(breaks),
+                         breaks = c(rel.min, rel.max),
+                         labels = c(format(round(rel.min,2),nsmall = 2),
+                                    format(round(rel.max,2),nsmall = 2)),
+                         limits = c(rel.min, rel.max),
+                         na.value = "transparent") +
+    geom_polygon(data = fortify(sdm.breeding.shp),
+                 aes(x = long, y = lat, group = group),
+                 fill = "transparent", color = "black",
+                 size = 0.25) +
+    scale_x_continuous(breaks = c(-108, -107, -106, -105),
+                       limits = c(-108.5, -104.8)) +
+    scale_y_continuous(breaks = c(37:41),
+                       limits = c(36.4, 41.7)) +
+    xlab("Longitude") +
+    ylab("Latitude") +
+    coord_sf(crs = 4326, expand = F) +
+    theme(axis.text.y = element_text(angle = 45, hjust = 0.5, vjust = 1),
+        axis.text.x = element_text(angle = 45, vjust = 0.5),
+        panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank())
+  
+out.names <- paste0("./plots/automate/turbo/genomic.offset.100k.", ssps.years, ".turbo.pdf")
+ggsave(plot = p.current.proj.elev.bw, filename = out.names, 
+       height = 8, width = 6, dpi = 300)
+  
+}
+p.current.proj.elev.bw
+```
+
+

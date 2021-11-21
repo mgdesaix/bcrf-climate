@@ -1,0 +1,110 @@
+---
+title: "PCA from SNPrelate"
+author: "Matt G. DeSaix"
+date: "11/20/2021"
+output: html_document
+---
+
+
+
+
+```{r, message = F, warning = F}
+library(tidyverse)
+library(gdsfmt)
+library(SNPRelate)
+library(RColorBrewer)
+meta <- read_csv("../data/ROFI-meta-tidy.csv") %>%
+  dplyr::select(ShortName, Near_Town, Group_ID)
+```
+
+
+```{r}
+snpgdsVCF2GDS("./data/bcrf.qual30.maf10.meanDP6_12.10missing.snps.LDpruned0.2.norelate.nooutliers.vcf.gz", "./data/bcrf.snprelate.nooutliers.gds", method = "biallelic.only")
+
+rofi.gds <- snpgdsOpen("./data/bcrf.snprelate.nooutliers.gds")
+
+snpset.LDpruned0.2 <- snpgdsLDpruning(rofi.gds, ld.threshold = 0.2, autosome.only = F)
+pca.LDpruned0.2 <- snpgdsPCA(rofi.gds, snp.id = unlist(unname(snpset.LDpruned0.2)), autosome.only = F)
+saveRDS(object = pca.LDpruned0.2, file = "./data/bcrf.SNPRelate.pca.LDpruned0.2.nooutliers.RDS")
+```
+
+
+```{r}
+bcrf.snprelate.LD0.2 <- readRDS("./data/bcrf.SNPRelate.pca.LDpruned0.2.nooutliers.RDS")
+
+pva.bcrf <- sapply(bcrf.snprelate.LD0.2$eigenval, function(x) {x/sum(bcrf.snprelate.LD0.2$eigenval, na.rm = T)*100}) %>%
+  round(2)
+
+colnames(bcrf.snprelate.LD0.2$eigenvect) <- sprintf("PC-%02d", 1:ncol(bcrf.snprelate.LD0.2$eigenvect))
+pca_tib <- as_tibble(bcrf.snprelate.LD0.2$eigenvect[,1:6]) %>%
+    add_column("vcf_name" = bcrf.snprelate.LD0.2$sample.id,
+               .before = 1) %>%
+    left_join(meta, by = c("vcf_name" = "ShortName")) %>%
+  dplyr::select(-c(Near_Town))
+pca_long <- pca_tib %>%
+    tidyr::gather(., key = "PC", "val", -vcf_name, -Group_ID)
+
+# then expand a grid of the possible comparisons (ordered)
+pca_pairs <- expand.grid(vcf_name = pca_tib$vcf_name,
+                         Group_ID = pca_tib$Group_ID,
+                           PCx = sprintf("PC-%02d", 1:6),
+                           PCy = sprintf("PC-%02d", 1:6),
+                           stringsAsFactors = FALSE) %>%
+    tibble::as_tibble() %>%
+    dplyr::left_join(., pca_long, by = c("vcf_name", "PCx" = "PC")) %>%
+    dplyr::rename(val_x = val) %>%
+    dplyr::left_join(pca_long, by = c("vcf_name", "PCy" = "PC")) %>%
+    dplyr::rename(val_y = val) %>%
+  dplyr::select(-c(Group_ID.x, Group_ID.y))
+
+full.pca <- pca_pairs %>%
+  ggplot() +
+  geom_point(aes(x = val_x, y = val_y, fill = Group_ID),
+             size = 2, shape = 21, alpha = 0.75) +
+  scale_fill_manual(values = brewer.pal(name = "Set3", n = 10)) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        axis.title = element_blank()) +
+  facet_grid(PCy ~ PCx)
+# ggsave(plot = full.pca, filename = "./plots/full.pca.nooutliers.png",
+#        width = 8, height = 8)
+full.pca
+```
+
+```{r}
+pc1pc2 <- pca_pairs %>%
+  filter(PCx == "PC-01",
+         PCy == "PC-02") %>%
+  ggplot() +
+  geom_point(aes(x = val_x, y = val_y, fill = Group_ID),
+             size = 5, shape = 21, alpha = 0.9) +
+  scale_fill_manual(values = brewer.pal(name = "Set3", n = 10)) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank()) +
+  xlab(paste0("PC1 (", pva.bcrf[1], "% variance)")) +
+  ylab(paste0("PC2 (", pva.bcrf[2], "% variance)"))
+pc1pc2
+# ggsave(plot = pc1pc2, filename = "./plots/pc1.pc2.png",
+#        height = 6, width = 6)
+```
+
+
+```{r}
+pc3pc4 <- pca_pairs %>%
+  filter(PCx == "PC-03",
+         PCy == "PC-04") %>%
+  ggplot() +
+  geom_point(aes(x = val_x, y = val_y, fill = Group_ID),
+             size = 5, shape = 21, alpha = 0.9) +
+  scale_fill_manual(values = brewer.pal(name = "Set3", n = 10)) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank()) +
+  xlab(paste0("PC3 (", pva.bcrf[3], "% variance)")) +
+  ylab(paste0("PC4 (", pva.bcrf[4], "% variance)"))
+pc3pc4
+# ggsave(plot = pc3pc4, filename = "./plots/pc3.pc4.png",
+#        height = 6, width = 6)
+```

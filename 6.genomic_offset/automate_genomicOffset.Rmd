@@ -1,0 +1,144 @@
+---
+title: "Automate genomic offset BCRF"
+author: "Matt DeSaix"
+date: "11/20/2021"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+library(gradientForest)
+library(raster)
+library(rgdal)
+library(ggpattern)
+```
+
+
+```{r}
+states.shp <- readRDS("../SDMs/data/states.cropped.shp.rds")
+domain <- c(
+  xmin = -110, 
+  xmax = -104,
+  ymin = 36,
+  ymax = 42
+)
+```
+
+```{r}
+AW.names <- names(readRDS("~/Desktop/biomod2/data/adaptwest/cropped/adaptwest.1991_2020.cropped.projected.rds"))
+AW.env <- raster::stack("~/Desktop/biomod2/data/adaptwest/cropped/adaptwest.1991_2020.cropped.projected.tif")
+names(AW.env) <- AW.names
+
+# Env <- readRDS("~/Desktop/biomod2/data/env/current_ensemble.rds")
+# gf5 <- Env[[c(19,15, 11, 3, 22)]]
+# Env.top5 <- Env[[c(2,4,13,14,20)]]
+# 11,12,15,3,5,8,ffdays
+# Env.top7 <- Env[[c(3,4,7,13,15,18,22)]]
+# Env top 6: 11,12,15,3,8,ffdays
+# Env.top6 <- Env[[c(11,12,15,3,8,22)]]
+# file.names <- c("bio19", "bio15", "bio11", "bio3", "ffdays")
+# names(gf5) <- file.names
+AW.gf5.names <- c("NFFD", "TD", "Tave_wt", "RH", "PPT_sm")
+gf5 <- AW.env[[AW.gf5.names]]
+
+all.forests <- list.files("~/Desktop/biomod2/gradientforest/output/gftree_iters", 
+                          pattern = "*.ntree.50.mtry.*",
+                          full.names = T)
+forest1 <- readRDS(all.forests[1])
+forest2 <- readRDS(all.forests[2])
+all.future.ensembles <- list.files("~/Desktop/biomod2/data/adaptwest/future/cropped/all32",
+                           pattern = "*.tif",
+                           full.names = T)
+all.future.ensembles.names <- list.files("~/Desktop/biomod2/data/adaptwest/future/cropped/all32",
+                           pattern = "*.tif") %>%
+  gsub("adaptwest.all32.", "", .) %>%
+  gsub(".tif", "", .)
+
+sdm.breeding.shp <- readOGR(dsn = "~/Desktop/biomod2/output/adaptwest/top6/current_shapefile/")
+Env.masked <- mask(gf5, sdm.breeding.shp)
+```
+
+```{r}
+
+for(i in 1:length(all.future.ensembles)){
+  Env.new <- raster::stack(all.future.ensembles[i])
+  names(Env.new) <- AW.names
+  Env.new <- Env.new[[AW.gf5.names]] %>%
+    mask(sdm.breeding.shp) %>%
+    raster::stack()
+
+  # sample 100k points
+  set.seed(83)
+  xy.points.100k <- sampleRandom(Env.masked, size = 100000, na.rm = T, xy = T, sp = T) %>%
+  as_tibble() %>% dplyr::select(c("x", "y"))
+
+full.present.100k <- raster::extract(Env.masked, xy.points.100k)
+full.future.100k <- raster::extract(Env.new, xy.points.100k)
+genomic.offset <- xy.points.100k
+colnames(genomic.offset) <- c("Lon", "Lat")
+# iterate through different gradient forest models
+for(k in 1:length(all.forests)){
+  bcrfForest <- readRDS(all.forests[k])
+  current_grid <- cbind(xy.points.100k,
+                        predict(bcrfForest, full.present.100k %>%
+                                as.data.frame())) %>%
+    dplyr::select(-c(1,2))
+  future_grid <- cbind(xy.points.100k, 
+                       predict(bcrfForest, full.future.100k %>%
+                               as.data.frame())) %>%
+    dplyr::select(-c(1,2))
+
+  tmp.go.vec <- c()
+  for(j in 1:nrow(current_grid)){
+    tmp.val <- as.numeric(dist(rbind(current_grid[j,], future_grid[j,])))
+    tmp.go.vec <- c(tmp.go.vec, tmp.val)
+  } 
+  tmp.name <- paste0("GO", k)
+  genomic.offset <- genomic.offset %>%
+    add_column("{tmp.name}" := tmp.go.vec)
+}
+  ssp.years <- all.future.ensembles.names[i]
+  # offset name
+  offset.name <- paste0("./output/genomic_offset/AWgf5.genomic.offset.100k.", ssp.years, ".rds")
+  saveRDS(genomic.offset, offset.name)
+}
+```
+
+Summarize results
+
+```{r}
+offset.files <- list.files("./output/genomic_offset", pattern = ".rds", full.names = T)
+offset.df <- data.frame("Lon" = NA, "Lat" = NA, "Offset" = NA, 
+                        "SSPs" = NA, "Years" = NA)
+
+for(i in 1:length(offset.files)){
+  ssps.years <- strsplit(offset.files[i], "[.]") %>% 
+    sapply(., '[[', 6)
+  ssps <- strsplit(ssps.years, "_")[[1]][1]
+  years <- strsplit(ssps.years, "_")[[1]][2]
+  tmp.df <- readRDS(offset.files[i]) %>% 
+    mutate(Offset = (GO1+GO2+GO3+GO4+GO5+GO6+GO7+GO8+GO9+GO10)/10) %>% 
+    dplyr::select(Lon, Lat, Offset)
+  out.name <- paste0("./output/genomic_offset/gf5.genomic.offset.mean10runs.", ssps.years,".csv")
+  write_csv(tmp.df, out.name)
+  tmp.df <- tmp.df %>%
+    add_column("SSPs" = ssps, "Years" = years)
+  offset.df <- rbind(offset.df, tmp.df) %>%
+    drop_na()
+}
+
+p.offset <- offset.df %>%
+  mutate(SSPs = factor(SSPs),
+         Years = factor(Years)) %>%
+    mutate(Years = recode(Years, "2041" = "2050s", "2071" = "2080s")) %>%
+  ggplot() +
+  geom_boxplot(aes(x = Years, y = Offset, fill = SSPs)) +
+  theme_bw() +
+  ylab("Genomic Offset")
+p.offset
+# ggsave(plot = p.offset, filename = "./output/genomic_offset/go.ssp.year.comparison.pdf",
+#        width = 6, height = 5)
+```
+
+

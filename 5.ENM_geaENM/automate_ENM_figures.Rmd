@@ -1,0 +1,172 @@
+---
+title: 'Making high quality figures for habitat suitability: Brown-capped Rosy-Finch'
+author: "Matt G. DeSaix"
+date: "11/18/2021"
+output: html_document
+---
+
+```{r, echo = F, message = F}
+library(tidyverse)
+library(raster)
+library(rgdal)
+library(viridis)
+library(biomod2)
+library(ggnewscale)
+library(ggspatial)
+library(ggpattern)
+```
+
+```{r}
+states.shp <- readRDS("/./ROFI/analysis/SDMs/data/states.cropped.shp.rds")
+domain <- c(
+  xmin = -109, 
+  xmax = -104.2,
+  ymin = 36,
+  ymax = 42
+)
+elev <- raster("/./ROFI/analysis/data/gradient-forest/cropped/historical/wc2.1_30s_elev.cropped.asc") %>%
+  crop(y = domain)
+
+crs(elev) <- "+init=epsg:4326"
+dsm.hill.ras <- hillShade(terrain(elev,opt='slope'), 
+                      terrain(elev,opt='aspect'),
+                      angle = 40, direction = 270)
+dsm.hill <- dsm.hill.ras %>%
+  rasterToPoints() %>%
+  data.frame()
+gg.elev <- elev %>%
+  rasterToPoints() %>%
+  data.frame()
+colnames(gg.elev) <- c("x","y", "Elevation")
+
+current.poly <- readOGR(dsn = path.expand("~/Desktop/biomod2/output/adaptwest/top6/current_shapefile/"))
+```
+
+### Specify models
+
+```{r}
+# bcrf.biomod.ef.current.proj.mean <- readRDS("./output/final/top6/bcrf.top6env.jun10aug1.current.projection.ef.top3mods.10runs.raster.rds")
+bcrf.biomod.ef.current <- readRDS("./output/adaptwest/gf5/bcrf.AWgf5.jun10aug1.current.projection.ef.GlmMax.10runs.rds")
+bcrf.biomod.ef.current.proj <- get_predictions(bcrf.biomod.ef.current)
+bcrf.biomod.ef.current.proj.mean <- bcrf.biomod.ef.current.proj[[1]]/1000
+bcrf.biomod.em <- readRDS("./output/adaptwest/gf5/bcrf.AWgf5.jun10aug1.em.GlmMax.10runs.rds")
+biomod.eval <- get_evaluations(bcrf.biomod.em)
+thresh <- biomod.eval[[1]][2,2]/1000
+```
+
+
+```{r}
+bcrf.biomod.ef.current.proj.mean.wNA <- bcrf.biomod.ef.current.proj.mean
+bcrf.biomod.ef.current.proj.mean.wNA[bcrf.biomod.ef.current.proj.mean.wNA < thresh] <- NA
+breaks <- 10
+p.current <- ggplot() +
+  # layer_spatial(elev) +
+  # scale_fill_continuous(type = "gradient") +
+  layer_spatial(dsm.hill.ras, aes(alpha = stat(band1)), alpha = 1) +
+  scale_fill_gradientn(colors=grey.colors(100, start = 0, end = 0.7), 
+                       guide = F) +
+  # scale_alpha(guide=FALSE,range = c(0,1.00)) +
+  ggnewscale::new_scale_fill() +
+  layer_spatial(bcrf.biomod.ef.current.proj.mean.wNA) +
+      scale_fill_gradientn(name = "Habitat suitability",
+                         na.value = "transparent",
+                     colors = magma(breaks),
+                     breaks = c(0, 1),
+                     labels = c("Low", "High"),
+                     limits = c(0,1)) +
+    xlab("Longitude") +
+  ylab("Latitude") +
+  scale_x_continuous(breaks = c(-108, -107, -106, -105),
+                     limits = c(-108.5, -104.8)) +
+  scale_y_continuous(breaks = c(37:41),
+                     limits = c(36.4, 41.7)) +
+  coord_sf(crs = 4326, expand = F) +
+  theme(axis.text.y = element_text(angle = 45, hjust = 0.5, vjust = 1),
+        axis.text.x = element_text(angle = 45, vjust = 0.5),
+        panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank()
+  )
+p.current
+ggsave(plot = p.current,
+       filename = "./output/adaptwest/gf5/plots/AWgf5.current.sdm.magma.bw.pdf",
+       dpi = 300, height = 8, width = 6)
+```
+
+
+### Future
+
+```{r}
+breaks <- 10
+list.efs <- list.files("./output/adaptwest/top5/future/GlmMax", pattern = "*.ef.*",full.names = T)
+list.efs.names <- list.efs %>%
+  gsub(pattern = "./output/adaptwest/top5/future/GlmMax/bcrf.AWtop55.jun10aug1.", "", .) %>%
+  gsub(pattern = ".ef.GlmMax.10runs.rds", "", .)
+
+for(i in 1:length(list.efs)){
+  bcrf.biomod.ef.future <- readRDS(list.efs[i])
+  bcrf.biomod.ef.future.proj <- get_predictions(bcrf.biomod.ef.future)
+  bcrf.biomod.ef.future.proj.mean <- bcrf.biomod.ef.future.proj[[1]]/1000
+  bcrf.biomod.ef.future.proj.mean[bcrf.biomod.ef.future.proj.mean < thresh] <- NA
+  
+  p.future.tmp <- ggplot() +
+  # layer_spatial(elev) +
+  # scale_fill_continuous(type = "gradient") +
+  layer_spatial(dsm.hill.ras, aes(alpha = stat(band1)), alpha = 1) +
+  scale_fill_gradientn(colors=grey.colors(100, start = 0, end = 0.7), 
+                       guide = F) +
+    # geom_polygon(data =current.poly,
+    #              aes(x = long, y = lat, group = group)) +
+    geom_polygon_pattern(data = current.poly,
+               aes(x = long, y = lat, group = group),
+               pattern = 'stripe',
+               pattern_color = "grey90",
+               fill = "transparent",
+               color = "grey90",
+               size = 0.2,
+               pattern_density = 0.01,
+               pattern_size = 0.2,
+               pattern_spacing=0.01) +
+  # scale_alpha(guide=FALSE,range = c(0,1.00)) +
+  ggnewscale::new_scale_fill() +
+  layer_spatial(bcrf.biomod.ef.future.proj.mean) +
+      scale_fill_gradientn(name = "Habitat suitability",
+                         na.value = "transparent",
+                     colors = magma(breaks),
+                     breaks = c(0, 1),
+                     labels = c("Low", "High"),
+                     limits = c(0,1)) +
+    xlab("Longitude") +
+  ylab("Latitude") +
+    scale_x_continuous(breaks = c(-108, -107, -106, -105),
+                       limits = c(-108.5, -104.8)) +
+    scale_y_continuous(breaks = c(37:41),
+                       limits = c(36.4, 41.7)) +
+  coord_sf(expand = F) +
+  theme(axis.text.y = element_text(angle = 45, hjust = 0.5, vjust = 1),
+        axis.text.x = element_text(angle = 45, vjust = 0.5),
+        panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank()
+  )
+  out.p.name <- paste0("./output/adaptwest/gf5/plots/AWgf5.future.", list.efs.names[i], ".sdm.magma.bw.patterned.pdf")
+  
+ggsave(plot = p.future.tmp, 
+       filename = out.p.name, 
+       dpi = 300, height = 8, width = 6)
+}
+```
+
+
+
+```{r}
+fut.pts <- rasterToPoints(bcrf.biomod.ef.future.proj.mean)
+fut.elev <- raster::extract(elev, fut.pts[,c(1,2)])
+
+cur.elev <- raster::extract(elev, current.poly)[[1]]
+elev.t.test <- t.test(x = cur.elev, y = fut.elev, var.equal = T)
+elev.t.test
+```
+
+
+

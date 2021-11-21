@@ -1,0 +1,134 @@
+---
+title: "Pairwise FST from ANGSD"
+output: html_notebook
+---
+
+Here is a brief rundown of my order of operations for getting 2dsfs through ANGSD. The steps are:
+
+1) Get SAF files
+2) Calculate 2dsfs
+
+### 1) SAF
+
+First I get site allele frequency files (SAF) for all of my pops, in this instance I have 15 pops:
+
+```sh
+#!/bin/bash
+
+#SBATCH --time=24:00:00
+#SBATCH --output=saf_%A_%a
+#SBATCH --array=1-15
+#SBATCH --mail-type=ALL
+#SBATCH --ntasks-per-node 8
+#SBATCH --mem=32G
+#SBATCH --mail-user=mgdesaix@gmail.com
+
+list=$(awk -v N=$SLURM_ARRAY_TASK_ID 'NR == N {print $1}' fst-list)
+pop=$(echo $list | cut -d'-' -f2)
+reference=
+outdir="./angsd/fst/saf"
+
+angsd -b $list -anc $reference -ref $reference \
+    -P 8 \
+    -dosaf 1 -gl 1 \
+    -doMajorMinor 4 \
+    -skipTriallelic 1 \
+    -uniqueOnly 1 \
+    -baq 1 \
+    -minQ 20 -minMapQ 30 \
+    -doCounts 1 -setMinDepth xx -setMaxDepth xx \
+    -minInd 5 \
+    -out ${outdir}/${pop}
+```
+
+Since I am running the above as a job array, I use as input a file called `fst-list` has a file name for each of the pops. It looks like this:
+
+```
+$ head -n 4 fst-list
+list-BC1
+list-BC2
+list-KY
+list-LA
+```
+
+Each of these lists have all of the individual bamfiles for those different pops.
+
+```
+$ head -n 4 list-BC1
+merged.DNASERU2001.bam
+merged.DNASERU2003.bam
+merged.DNASERU2024.bam
+Plate2.DNASERU2021_RG.bam
+```
+
+### 2) 2dSFS
+
+Now that there's all the saf files by population, you need every possible combination. So in `R` you could calculate that as `choose(n,2)` where `n = # of pops`.  I use that as reference for the job array:
+
+```sh
+#!/bin/bash
+
+#SBATCH --time=24:00:00
+#SBATCH --output=fst_%A_%a
+#SBATCH --array=1-105
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=
+#SBATCH --ntasks=24
+#SBATCH --mem=100g
+
+# Note, full array for the 15 sites is 1-105 since choose(15,2) = 105
+
+angsd="./programs/angsd"
+outdir="./angsd/fst/2dsfs"
+
+idxi=$(awk -v N=$SLURM_ARRAY_TASK_ID 'NR == N {print $1}' fst-pairs.txt)
+idxj=$(awk -v N=$SLURM_ARRAY_TASK_ID 'NR == N {print $2}' fst-pairs.txt)
+
+
+popi=$(echo $idxi | cut -d'.' -f1)
+popj=$(echo $idxj | cut -d'.' -f1)
+
+
+# Calculate 2D sfs from SAF files
+# ${angsd}/misc/realSFS $idxi $idxj -P 24 -nsites 100000000 > ${outdir}/${popi}.${popj}.sfs
+${angsd}/misc/realSFS $idxi $idxj -P 24 > ${outdir}/${popi}.${popj}.sfs
+
+# The next awk line is only needed if -nsites is specified above for big populations
+# Average across the multiple estimates of SFS and produce a single row file of SFS
+# This avoids a dimension error I came across from sfs file otherwise when specifying nsites
+# awk '{for(i=1;i<=NF;i++){$i=(a[i]+=$i)/NR}}END{print}' ${outdir}/${popi}.${popj}.sfs > ${outdir}/${popi}.${popj}.ave.sfs
+
+# Check outdir
+outdir2="./angsd/fst/2dsfs/2dfst_small"
+
+## Note that -whichFst is for doing the small sample size calculation outlined on the docs page
+
+${angsd}/misc/realSFS fst index $idxi $idxj -whichFst 1 -sfs ${outdir}/${popi}.${popj}.sfs -fstout ${outdir2}/${popi}.${popj}
+
+cd ${outdir2}
+
+# Global estimate of fst
+${angsd}/misc/realSFS fst stats ${popi}.${popj}.fst.idx > ${popi}.${popj}.fst.global.txt
+
+# Sliding window: 50kb window, 25 kb slide
+${angsd}/misc/realSFS fst stats2 ${popi}.${popj}.fst.idx -win 50000 -step 25000 -whichFST 1 > ${popi}.${popj}.fst.50kbin.txt
+```
+
+So the input file for the above job array looks like this:
+
+```
+$ head -n 4 fst-pairs.txt
+BC1.saf.idx BC2.saf.idx
+BC1.saf.idx KY.saf.idx
+BC1.saf.idx LA.saf.idx
+BC1.saf.idx MD.saf.idx
+```
+
+I created the pairwise combination file from all the saf files, using a nested for loop:
+
+```sh
+ls *saf.idx > saf.list
+n=$(wc -l saf.list | awk '{print $1}')
+
+for (( i = 1; i < $n; i++ )); do k=$(( i + 1 )); for (( j = $k; j <= n; j++ )); do popi=$(awk -v i=$i 'NR == i {print $1}' saf.list); popj=$(awk -v j=$j 'NR == j {print $1}' saf.list); echo $popi $popj >> fst-pairs.txt; done; done
+```

@@ -1,0 +1,81 @@
+---
+title: 'Isolation by distance'
+author: "Matt DeSaix"
+date: "11/19/2021"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+fst <- read_csv("../fst/bcrf.qual30.maf00.meanDP6_12.10missing.snps.norelate-noEBMO.fst_summary.csv") %>% 
+  pivot_longer(cols = 2:10, names_to = "Pop2", values_to = "Fst") %>%
+  rename(Pop1 = X1) %>%
+  drop_na() %>%
+  filter(Fst != 0) %>%
+  mutate(LinearizedFst = Fst/(1-Fst))
+
+sites <- read_csv("../data/ROFI-meta-tidy.csv") %>%
+  filter(Alpha_Code == "BCRF",
+         !Group_ID %in% c("EBMO")) %>%
+  mutate(Group_ID = factor(Group_ID, levels = unique(Group_ID))) %>%
+  dplyr::group_by(Group_ID) %>%
+  dplyr::summarize(Lat = mean(Lat),
+            Long = mean(Long))
+```
+
+```{r}
+### Geographic
+
+library(geosphere)
+### Distance matrix
+xy <- sites[,c("Long", "Lat")]
+# Returns matrix of distances in kilometers
+geo <- matrix(nrow = nrow(xy), ncol = nrow(xy))
+for(i in 1:nrow(xy)) {
+  for(j in 1:nrow(xy)) {
+    geo[i,j] <- distGeo(xy[i,], xy[j,])
+  }
+}
+# change to kilometers from meters
+geo <- geo/1000
+rownames(geo) <- sites$Group_ID
+geo.dist <- as.dist(geo)
+
+
+### Genetic distances
+
+fst.matrix <- matrix(nrow = nrow(sites), ncol = nrow(sites))
+fst.matrix[lower.tri(fst.matrix)] <- fst$LinearizedFst
+diag(fst.matrix) <- 0
+gen.dist <- as.dist(fst.matrix)
+
+
+df <- data.frame("Geodist" = as.vector(geo.dist), 
+                 "Gendist" = as.vector(gen.dist),
+                 "Pop1" = fst$Pop1,
+                 "Pop2" = fst$Pop2) %>%
+  add_column(Sites = "Other") %>%
+  mutate(Sites = replace(Sites, which(Pop1 %in% "PIPE" |
+                                      Pop2 %in% "PIPE"),"PIPE"))
+p <- ggplot(df) +
+  geom_point(aes(x = log10(Geodist), 
+                 y = Gendist),
+             size = 5,
+             alpha = 0.6,
+             color = "grey10") +
+  theme_bw() +
+  ylab("FST/(1-FST)") +
+  xlab("Log10 Distance (Km)") +
+  ylim(c(0,0.06)) + xlim(c(0,3))
+p
+# ggsave(plot = p, filename = "./bcrf.ibd.png", width = 6, height = 5)
+```
+
+```{r}
+library(ade4)
+# log10 distance
+ibd <- mantel.randtest(gen.dist, log10(geo.dist), nrepet = 99999)
+ibd
+```
+
