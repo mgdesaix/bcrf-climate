@@ -1,6 +1,6 @@
 ---
 title: 'Making high quality figures for habitat suitability: Brown-capped Rosy-Finch'
-author: "Matt G. DeSaix"
+author: ""
 date: "11/18/2021"
 output: html_document
 ---

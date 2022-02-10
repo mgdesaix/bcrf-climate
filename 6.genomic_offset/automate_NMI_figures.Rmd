@@ -1,6 +1,6 @@
 ---
 title: "Automate niche margin plots"
-author: "Matt G. DeSaix"
+author: ""
 date: "11/20/2021"
 output: html_document
 ---

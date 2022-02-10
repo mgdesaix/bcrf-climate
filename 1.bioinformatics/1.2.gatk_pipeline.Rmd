@@ -1,6 +1,6 @@
 ---
 title: "GATK pipeline"
-author: "Matt DeSaix"
+author: ""
 output: html_notebook
 ---
 

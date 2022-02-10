@@ -1,6 +1,6 @@
 ---
 title: 'Isolation by distance'
-author: "Matt DeSaix"
+author: ""
 date: "11/19/2021"
 output: html_document
 ---

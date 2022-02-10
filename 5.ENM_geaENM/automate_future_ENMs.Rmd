@@ -1,6 +1,6 @@
 ---
 title: 'Future ENMs: Brown-capped Rosy-Finch'
-author: "Matt G. DeSaix"
+author: ""
 date: "11/8/2021"
 output: html_document
 ---

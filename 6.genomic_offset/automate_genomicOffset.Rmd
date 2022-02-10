@@ -1,6 +1,6 @@
 ---
 title: "Automate genomic offset BCRF"
-author: "Matt DeSaix"
+author: ""
 date: "11/20/2021"
 output: html_document
 ---
