@@ -1,6 +1,4 @@
-# Population genetics
-
-
+# Population Genetics
 
 ## Principal components analysis
 
