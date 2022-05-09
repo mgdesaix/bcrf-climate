@@ -1,4 +1,6 @@
 # bcrf-climate
-Bioinformatics and analysis scripts for Brown-capped Rosy-Finch (*Leucosticte australis*) climate change project
+Bioinformatics and analysis scripts for Brown-capped Rosy-Finch (*Leucosticte australis*) climate change project:
 
-Scripts are organized in folders that are basically in the order stuff would be run, starting with the bioinformatics and going through the different analyses.
+1.  [Data preprocessing](https://github.com/mgdesaix/bcrf-climate/blob/master/01_Preprocessing/Preprocessing.md): Includes trimming FASTQs, mapping to reference, merging, marking PCR duplicates, etc.
+
+2.  [Variant calling](https://github.com/mgdesaix/bioinf-bcrf-climate/blob/master/02_VariantCalling/Variants.md): Base quality recalibration, filtering high-quality SNPs, etc with **not** low-coverage data (>6x). 

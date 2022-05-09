@@ -1,7 +1,4 @@
----
-title: "WGS preprocessing: From FASTQ to BAM files"
-output: html_notebook
----
+# WGS Preprocessing: From FASTQ to BAM files
 
 This details the general initial steps I've been using to process the raw whole-genome sequence files for the Rosy-Finch data  
 
@@ -187,5 +184,3 @@ The `rofi-merged-list` is just a list of all merged BAMS:
 17N04031.merged.bam
 17N04032.merged.bam
 ```
-
-
