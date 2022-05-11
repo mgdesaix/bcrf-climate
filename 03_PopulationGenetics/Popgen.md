@@ -11,7 +11,9 @@ I used the [KING software](https://www.kingrelatedness.com/manual.shtml) to iden
 
 ## Sex-linked variation
 
-Interestingly, PCA showed evidence of separation of individuals by the sexes. This was made more apparent when ancestry values were computed for K=2 with `snmf` from the `LEA` R package. Comparing the ancestry Q values with sex revealed clear separation.
+Interestingly, PCA showed evidence of separation of individuals by the sexes. This was made more apparent when ancestry values were computed for K=2 with `snmf` from the `LEA` R package. No geographic structure was evident with the K=2 bar plot, but comparing the ancestry Q values with sex revealed clear separation of male vs female.
+
+![](images/bcrf.k2.barplot.png?raw=true)
 
 ![](images/bcrf.sex.k2.png?raw=true)
 
