@@ -7,3 +7,13 @@ PCA was initially used to visualize individual genetic variation (see [PCA scrip
 ## Identify related individuals
 
 I used the [KING software](https://www.kingrelatedness.com/manual.shtml) to identify related individuals up to the 2nd degree (see [relatedness script](./slurm-scripts/get_related.sh)). To do so, I used all SNPs that passed quality filters, but were not filtered by minor allele frequency, based on the recommendations of the developers. The results of this analysis resulted in the removal of 12 individuals due to relatedness up to the 2nd degree.
+
+
+## Sex-linked variation
+
+Interestingly, PCA showed evidence of separation of individuals by the sexes. This was made more apparent when ancestry values were computed for K=2 with `snmf` from the `LEA` R package. Comparing the ancestry Q values with sex revealed clear separation.
+
+![](images/bcrf.sex.k2.png?raw=true)
+
+
+
