@@ -123,7 +123,7 @@ I then used GATK's [GatherVCFs](https://gatk.broadinstitute.org/hc/en-us/article
 - 2 alleles (-m 2 -M 2)
 - SNPs (--type snps)
 - Missing genotypes < 10% (-i 'F_MISSING < 0.1')
-- Minor allele frequency of < 0.05 (--min-af 0.05 --max-af 0.95)
+- Minor allele frequency of < 0.1 (--min-af 0.1 --max-af 0.1)
 - Depth of less than 2x the average depth and greater than average depth based on the number of missing individuals allowed. With mean depth of 6 and 10% missing allowed, the minimum was 6*0.9=5.4 (-i 'AVG(FORMAT/DP)>5.4 & AVG(FORMAT/DP)<12')
 
 
