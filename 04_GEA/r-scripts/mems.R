@@ -9,10 +9,13 @@ library(adegraphics)
 # Brown-capped rosy-finch sampling data
 # using subset of samples that aren't related
 
+# meta data with lat/long for individual's sampling site
 bcrf.individuals <- read_csv("../../data/ROFI-meta-tidy.csv") %>%
   dplyr::filter(Alpha_Code == "BCRF") %>%
   dplyr::select(ShortName, Lat, Long, Group_ID)
 
+# this file is read in that has individuals in the same order as they are in the vcf
+# easy to get sample order with: bcftools query -l input.vcf
 bcrf.nokinerror <- read_csv("../data/snprelate/bcrf.vcf.nokinerror.individuals.txt") %>%
   left_join(bcrf.individuals, by = c("id" = "ShortName"))
 

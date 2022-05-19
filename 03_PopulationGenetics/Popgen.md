@@ -23,3 +23,14 @@ Interestingly, PCA showed evidence of separation of individuals by the sexes. Th
 
 To remove sex-linked variation (autosomal or sex chromosomes), I used the ancestry values from `snmf` to classify individuals as male or female, and then calculated pairwise Fst values for all SNPs in `vcftools` (see [script](./slurm-scripts/get_pairwise_fsts.sh). SNPs were filtered out that had > 0.01 FST between males and females (see [filtering script](./slurm-scripts/get_sex_linked/removed.sh))
 
+## Population structure
+
+After removing sex-linked variation, I checked population structure with principal components analysis (again with `SNPRelate` in R), ancestry values (again with `snmf` from `LEA` package in R), and also checked isolation by distance.
+
+For isolation by distance, I used pairwise FSTs to derive the linearized FST (i.e. $\frac{\text{FST}}{1-\text{FST}}$) among sampling sites, and compared to geographic distance. I formally tested the association between genetic and geographic distances with a Mantel test in the R package `ade4`. The results did not suggest a pattern of isolation by distance, but the plotting of sites revealed that the Pike's Peak site (site ID = PIPE) had elevated genetic differentiation with other sites.
+
+![](images/ibd_PIPE.png?raw=true)
+
+PCA also revealed weak clustering of PIPE individuals from other sampling sites. Ancestry values had the lowest cross-validation error for K=1, but K=2 had only slightly higher error and showed PIPE individuals as separate. These results provided evidence that some weak population structure should be accounted for in the subsequent [genetic environment association analyses](https://github.com/mgdesaix/bcrf-climate/blob/main/04_GEA/GEA.md)
+
+

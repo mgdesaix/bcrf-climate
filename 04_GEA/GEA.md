@@ -24,7 +24,7 @@ To account for population structure in the RDA, I created Moran Eigenvector Maps
 
 ### Running RDA
 
-RDA was performed on the cluster in R (see [RDA R script](./r-scripts/run_rda.1961_1990.R)). The general model used was:
+RDA was performed R (see [RDA R script](./r-scripts/run_rda.1961_1990.R)) using the [`vegan` package](https://cran.r-project.org/web/packages/vegan/index.html): . The general model used was:
 
 ```
 Genotypes ~ Condition(MEM1) + Elev + MWMT + PAS + SHM
