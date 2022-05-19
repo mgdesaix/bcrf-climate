@@ -13,14 +13,14 @@ Correlated environmental variables were identified by $|r| < 0.75$ based on the 
 - Elevation (Elev)
 - Summer heat moisture index (SHM)
 
-The filtered genotypes of the 104 unrelated BCRF individuals were used as the genetic data for these analyses. This data set had 2,367,581 SNPs.
+The filtered genotypes of the 104 unrelated BCRF individuals were used as the genetic data for these analyses. This data set had 429,442 SNPs.
 
 ## Redundancy analysis (RDA)
 
 First, I created spatial variables to use to condition the RDA model on, as a method to account for population structure. Then, I performed RDA using individual genotypes as the response variable and the environmental variables identified above as the predictor variables.
 
 ### Moran Eigenvector Maps (MEMs)
-To account for population structure in the RDA, I created Moran Eigenvector Maps (MEMs) as spatial variables in the R package `adespatial`. In short, I used the lat/lon coordinates of the BCRF sampling locations to create spatial distances, which, in turn, were used to create the MEMs. Additional explanation of MEMs can be found [here by Stéphane Dray](https://cran.r-project.org/web/packages/adespatial/vignettes/tutorial.html). My code for creating MEMs for Brown-capped Rosy-Finch is [here](./r-scripts/mems.R).
+To account for population structure (via association with geography) in the RDA, I created Moran Eigenvector Maps (MEMs) as spatial variables in the R package `adespatial`. In short, I used the lat/lon coordinates of the BCRF sampling locations to create spatial distances, which, in turn, were used to create the MEMs. Additional explanation of MEMs can be found [here by Stéphane Dray](https://cran.r-project.org/web/packages/adespatial/vignettes/tutorial.html). My code for creating MEMs for Brown-capped Rosy-Finch is [here](./r-scripts/mems.R).
 
 ### Running RDA
 
@@ -32,7 +32,7 @@ Genotypes ~ Condition(MEM1) + Elev + MWMT + PAS + SHM
 
 ## Latent factor mixed models (LFMM)
 
-To correct for population structure in LFMM, I calculated ancestry values with the `snmf` function from the `LEA` R package ([see script](./r-scripts/run_snmf.R)). The results of this showed that K=1 was the best option, therefore latent factors were set as K=1 in the subsequent runs of LFMM.
+To correct for population structure in LFMM, I calculated ancestry values with the `snmf` function from the `LEA` R package ([see script](./r-scripts/run_snmf.R)). The results of this showed that K=1 was the best option based on cross-validation error. However, errors were also close with K=2, which I had previously determined might indicate population structure between Pike's Peak and other sampling sites (see [Population genetics section](https://github.com/mgdesaix/bcrf-climate/blob/main/03_PopulationGenetics/Popgen.md)). So, to account for potential weak structure, I set K=2.
 
 
 
