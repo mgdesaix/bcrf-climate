@@ -6,7 +6,7 @@ To identify putative adaptive variation, I identified candidate SNPs with redund
 
 Current and projected climate data for North America were obtained from the [AdaptWest Project](https://adaptwest.databasin.org/pages/adaptwest-climatena/)(AdaptWest Project 2021). The data set included 33 bioclimate variables (described [here](http://s3-us-west-2.amazonaws.com/www.cacpd.org/CMIP6/ReadMe_ClimateNA_CMIP6.txt)) and elevation.
 
-Correlated environmental variables were identified by $|r| < 0.75$ based on the environment values extracted for an individual's sampling location. Correlated variables were reduced by selecting environmental variables based on the biological relevance to the Rosy-Finch (see [environmental variable script](./r-scripts/environmental_variable_selection.R)). This resulted in a final data set of 4 variables:
+Correlated environmental variables were identified by $\vert r \vert < 0.75$ based on the environment values extracted for an individual's sampling location. Correlated variables were reduced by selecting environmental variables based on the biological relevance to the Rosy-Finch (see [environmental variable script](./r-scripts/environmental_variable_selection.R)). This resulted in a final data set of 4 variables:
 
 - Mean temperature of the warmest month (MWMT)
 - Precipitation as snow (PAS)
