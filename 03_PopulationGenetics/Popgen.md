@@ -17,7 +17,7 @@ I used the [KING software](https://www.kingrelatedness.com/manual.shtml) to iden
 
 Interestingly, PCA showed evidence of separation of individuals by the sexes. This was made more apparent when ancestry values were computed for K=2 with `snmf` from the `LEA` R package (see [snmf script](./r-scripts/run_snmf.r). No geographic structure was evident with the K=2 bar plot, but comparing the ancestry Q values with sex revealed clear separation of male vs female.
 
-<img src="images/bcrf.k2.barplot.png" alt="ancestry" width="600"/>
+<img src="images/bcrf.sex.k2.barplot.png" alt="ancestry" width="600"/>
 
 <img src="images/bcrf.sex.k2.png" alt="boxplot" width="600"/>
 
@@ -31,6 +31,12 @@ For isolation by distance, I used pairwise FSTs to derive the linearized FST (i.
 
 <img src="images/ibd_PIPE.png" alt="ibd" width="600"/>
 
-PCA also revealed weak clustering of PIPE individuals from other sampling sites. Ancestry values had the lowest cross-validation error for K=1, but K=2 had only slightly higher error and showed PIPE individuals as separate. These results provided evidence that some weak population structure should be accounted for in the subsequent [genetic environment association analyses](https://github.com/mgdesaix/bcrf-climate/blob/main/04_GEA/GEA.md)
+PCA also revealed weak clustering of PIPE individuals from other sampling sites.
 
+<img src="images/bcrf.pca.1.2.png" alt="ibd" width="600"/>
 
+Ancestry values had the lowest cross-validation error for K=1, but K=2 had only slightly higher error and showed PIPE individuals as separate. These results provided evidence that some weak population structure should be accounted for in the subsequent [genetic environment association analyses](https://github.com/mgdesaix/bcrf-climate/blob/main/04_GEA/GEA.md)
+
+<img src="images/ancestry_error_k1_6.png" alt="ibd" width="600"/>
+
+<img src="images/ancestry.k2.barplot.png" alt="ibd" width="600"/>
