@@ -74,7 +74,7 @@ where *ntree* and *mtry* are being specified by input variables.
 We identified convergence at 100 trees (*ntree* = 100) and maximum accuracy occurring with all 5 predictors used (*mtry* = 5)
 
 
-<img src="images/p.var.imp.facet.png" alt="Tuning parameters" width="600"/>
+<img src="images/p.var.imp.facet.png" alt="Tuning parameters" width="800"/>
 
 
 
