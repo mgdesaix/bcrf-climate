@@ -14,9 +14,9 @@ Bioinformatics and analysis scripts for Brown-capped Rosy-Finch (*Leucosticte au
 
 6. [Ecological niche models](https://github.com/mgdesaix/bcrf-climate/blob/main/06_EcologicalNicheModeling/enm.md): Modeling current and future habitat suitability
 
-7. [Genomic offset](https://github.com/mgdesaix/bcrf-climate/blob/main/07_GenomicOffset/genomic-offset.md)
+7. [Genomic offset](https://github.com/mgdesaix/bcrf-climate/blob/main/07_GenomicOffset/genomic-offset.md): Calculating genomic offset from gradient forest predictions of genetic composition
 
-8. [Niche margin index](https://github.com/mgdesaix/bcrf-climate/blob/main/08_NicheMarginIndex/nmi.md)
+8. [Niche margin index](https://github.com/mgdesaix/bcrf-climate/blob/main/08_NicheMarginIndex/nmi.md) Measuring environmental distance from trained values in gradient forest to assess extent of model extrapolation
 
 
 ### Supercomputing acknowledgements:
