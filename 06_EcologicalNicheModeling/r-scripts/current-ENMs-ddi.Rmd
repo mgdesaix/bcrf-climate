@@ -1,0 +1,249 @@
+---
+title: 'Current era species distribution modeling: Brown-capped Rosy-Finch'
+author: "Matt G. DeSaix"
+date: "05/22/2022"
+output: html_document
+---
+
+```{r, echo = F, message = F}
+library(tidyverse)
+library(auk)
+library(raster)
+library(rgdal)
+library(biomod2)
+library(cowplot)
+library(viridis)
+library(spData)
+library(sf)
+library(SSDM)
+library(ggspatial)
+```
+
+
+# get environmental data for BCRF
+
+
+
+```{r}
+domain <- c(
+  xmin = -110, 
+  xmax = -104,
+  ymin = 36,
+  ymax = 42
+)
+
+all.aw.1991 <- raster::stack("/Volumes/GoogleDrive/My Drive/CSU/Projects/ROFI/analysis/DDI-paper-2022/data/adaptwest_1991-2020_res0.008.tif")[[-c(16)]]
+
+env.1991 <- raster::stack(c(all.aw.1991[[c("MWMT", "PAS", "SHM")]],
+                            raster::raster("/Volumes/GoogleDrive/My Drive/CSU/Projects/ROFI/analysis/DDI-paper-2022/data/adaptwest_elevation.tif")))
+
+names(env.1991) <- c("MWMT", "PAS", "SHM", "Elev")
+
+```
+
+
+# get the occurence data
+
+```{r}
+Occ <- read_csv("/Volumes/GoogleDrive/My Drive/CSU/Projects/ROFI/analysis/SDMs/data/bcrf_filtered_jun10aug1_occ_sub_geores2.csv")
+species <- "Leucosticte.australis"
+pres.abs <- as.numeric(Occ$presence)
+xy <- Occ[,c("longitude", "latitude")]
+```
+
+
+Biomod2
+
+```{r}
+
+bcrf.biomod.data <- BIOMOD_FormatingData(
+  resp.var = pres.abs,
+  expl.var = env.1991,
+  resp.xy = xy,
+  resp.name = species
+)
+
+#Setting up Maxent run
+myBiomodOption <- Print_Default_ModelingOptions();
+myBiomodOption@MAXENT.Phillips$path_to_maxent.jar = paste(system.file(package="dismo"), "/java", sep='');
+myBiomodOption@MAXENT.Phillips$memory_allocated = 2048; #Allocates 2048 MB/2 GB of memory to modeling
+myBiomodOption@MAXENT.Phillips$maximumiterations = 10000;
+myBiomodOption@MAXENT.Phillips$threshold = F;
+myBiomodOption@MAXENT.Phillips$hinge = F;
+
+bcrf.biomod.full <- BIOMOD_Modeling(
+  bcrf.biomod.data,
+  models = c("GLM", "MAXENT.Phillips"), 
+  models.options = myBiomodOption,
+  NbRunEval = 10,
+  DataSplit = 80,
+  VarImport = 3,
+  models.eval.meth = c("TSS", "ROC"),
+  SaveObj = TRUE,
+  rescal.all.models = T,
+  do.full.models = F,
+  modeling.id = "AW.GlmMax"
+)
+saveRDS(bcrf.biomod.full, file = "./output/ddi/bcrf.AWtop5.jun10aug1.GlmMax.10runs.rds")
+```
+
+
+model evaluations
+
+```{r}
+bcrf.biomod.full <- readRDS("./output/ddi/bcrf.AWtop5.jun10aug1.GlmMax.10runs.rds")
+bcrf.biomod.eval <- get_evaluations(bcrf.biomod.full)
+gg1 <- models_scores_graph(bcrf.biomod.full,
+                           by = 'models',
+                           metrics = c('ROC', 'TSS'))
+```
+
+```{r}
+scores.tss <- bcrf.biomod.eval["TSS", "Testing.data",,,]
+scores.roc <- bcrf.biomod.eval["ROC", "Testing.data",,,]
+data.frame("TSSmean" = apply(scores.tss, 1, mean),
+           "TSSsd" = apply(scores.tss, 1, sd),
+           "ROCmean" = apply(scores.roc,1,mean),
+           "ROCsd" = apply(scores.roc,1,sd))
+```
+
+
+```{r}
+bcrf.varimp <- get_variables_importance(bcrf.biomod.full) %>%
+  asplit(1)
+# bcrf.varimp.names <- names(bcrf.varimp)
+# bio19.var <- apply(data.frame(bcrf.varimp["bio19"]),1,mean)
+# bio15.var <- apply(data.frame(bcrf.varimp["bio15"]),1,mean)
+# bio11.var <- apply(data.frame(bcrf.varimp["bio11"]),1,mean)
+# bio3.var <- apply(data.frame(bcrf.varimp["bio3"]),1,mean)
+# ffdays.var <- apply(data.frame(bcrf.varimp["ffdays"]),1,mean)
+# varimp.df <- data.frame(bio19 = bio19.var,
+#                         bio15 = bio15.var,
+#                         bio11 = bio11.var,
+#                         bio3 = bio3.var,
+#                         ffdays = ffdays.var)
+# varimp.df
+tmp.df <- tibble("GLM" = NA, "MAX" = NA)
+for(i in 1:length(names(bcrf.varimp))){
+  vals <- apply(bcrf.varimp[[i]], 1, mean)
+  tmp.df <- rbind(tmp.df, vals)
+}
+tmp.df <- tmp.df %>%
+  drop_na() %>%
+  add_column("Variable" = names(bcrf.varimp), .before = 1)
+tmp.df
+# write_csv(tmp.df, "./output/ddi/variable_importance.csv")
+```
+
+```{r}
+apply(varimp.df, 2, mean)
+```
+
+Ensemble modeling
+
+```{r}
+bcrf.biomod.em <- BIOMOD_EnsembleModeling(
+  modeling.output = bcrf.biomod.full,
+  chosen.models = "all",
+  em.by = "all",
+  eval.metric = c("TSS"),
+  eval.metric.quality.threshold = c(0.7),
+  prob.mean = T,
+  prob.cv = T,
+  prob.ci = T,
+  prob.ci.alpha = 0.05,
+  prob.median = T,
+  committee.averaging = T,
+  prob.mean.weight = T,
+  prob.mean.weight.decay = 'proportional'
+)
+
+saveRDS(bcrf.biomod.em, file = "./output/ddi/bcrf.AWtop5.jun10aug1.em.GlmMax.10runs.rds")
+```
+
+```{r}
+bcrf.biomod.em <- readRDS("./output/adaptwest/gf5/bcrf.AWgf5.jun10aug1.em.GlmMax.10runs.rds")
+biomod.eval <- get_evaluations(bcrf.biomod.em)
+biomod.eval
+```
+
+### variable importance
+
+```{r}
+varimp <- get_variables_importance(bcrf.biomod.full)
+dimnames(varimp)
+```
+
+```{r}
+varimp[,,"RUN10",]
+
+myMods <- BIOMOD_LoadModels(bcrf.biomod.full, models = c("GLM", "GBM"),
+                            run.eval = "RUN10")
+response.plot2(myMods,
+               Data = get_formal_data(bcrf.biomod.full, "expl.var"),
+               show.variables = get_formal_data(bcrf.biomod.full, "expl.var.names"),
+               do.bivariate = F,
+               fixed.var.metric = 'median',
+               data_species = get_formal_data(bcrf.biomod.full, 'resp.var'),
+               col = viridis(n = 4),
+               legend = TRUE)
+```
+
+### Current projection
+
+```{r}
+bcrf.biomod.current <- BIOMOD_Projection(
+  modeling.output = bcrf.biomod.full,
+  new.env = env.1991,
+  proj.name = 'AWtop5_GlmMax',
+  selected.models = "all",
+  binary.meth = 'TSS',
+  compress ='xz',
+  clamping.mask = T,
+  output.format = ".grd"
+)
+saveRDS(bcrf.biomod.current, file = "./output/ddi/bcrf.AWtop5.jun10aug1.current.projection.GlmMax.10runs.rds")
+
+
+# bcrf.biomod.current <- readRDS("./output/june10aug1/bcrf.top5.jun10aug1.current.projection.GlmMax.rds")
+bcrf.biomod.ef.current <- BIOMOD_EnsembleForecasting(
+  EM.output = bcrf.biomod.em,
+  projection.output = bcrf.biomod.current
+)
+saveRDS(bcrf.biomod.ef.current, file = "./output/ddi/bcrf.AWtop5.jun10aug1.current.projection.ef.GlmMax.10runs.rds")
+```
+
+
+```{r}
+bcrf.biomod.ef.current <- readRDS("./output/adaptwest/gf5/bcrf.AWgf5.jun10aug1.current.projection.ef.GlmMax.10runs.rds")
+bcrf.biomod.ef.current.proj <- get_predictions(bcrf.biomod.ef.current)
+```
+
+```{r}
+bcrf.biomod.ef.current.proj.mean <- bcrf.biomod.ef.current.proj[[1]]/1000
+# saveRDS(bcrf.biomod.ef.current.proj.mean, "./output/final/gf5/bcrf.gf5.jun10aug1.current.projection.ef.top3mods.10runs.raster.rds")
+plot(bcrf.biomod.ef.current.proj.mean)
+```
+
+
+
+Raster to shapefile
+
+```{r}
+# threshold based on TSS cutoff for weighted mean
+thresh <- biomod.eval[[1]][2,2]/1000
+
+
+current.mean.ef.modified <- bcrf.biomod.ef.current.proj.mean
+current.mean.ef.modified[current.mean.ef.modified < thresh] <- NA
+current.mean.ef.modified[current.mean.ef.modified >= thresh] <- 1
+current.poly <- rasterToPolygons(current.mean.ef.modified,
+                                na.rm = T, dissolve = T)
+# plot(current.poly)
+# # lines(breeding.shp, col = "red")
+layer.name <- paste0("EMmeanByTSS_current_TSSthresh_", thresh, "_jun10aug1")
+writeOGR(obj = current.poly, dsn = "output/ddi/shapefile",
+         layer = layer.name,
+         driver = "ESRI Shapefile")
+plot(current.mean.ef.modified)
+```

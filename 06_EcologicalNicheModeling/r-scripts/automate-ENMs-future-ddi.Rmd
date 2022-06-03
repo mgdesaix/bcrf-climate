@@ -1,0 +1,142 @@
+---
+title: 'Current era species distribution modeling: Brown-capped Rosy-Finch'
+author: "Matt G. DeSaix"
+date: "10/8/2021"
+output: html_document
+---
+
+```{r, echo = F, message = F}
+library(tidyverse)
+library(raster)
+library(rgdal)
+library(biomod2)
+library(cowplot)
+library(viridis)
+library(spData)
+library(sf)
+```
+
+
+```{r}
+bcrf.biomod.full <- readRDS("./output/ddi/bcrf.AWtop5.jun10aug1.GlmMax.10runs.rds")
+bcrf.biomod.em <- readRDS("./output/ddi/bcrf.AWtop5.jun10aug1.em.GlmMax.10runs.rds")
+
+domain <- c(
+  xmin = -110, 
+  xmax = -104,
+  ymin = 36,
+  ymax = 42
+)
+
+all.aw.1991 <- raster::stack("/Volumes/GoogleDrive/My Drive/CSU/Projects/ROFI/analysis/DDI-paper-2022/data/adaptwest_1991-2020_res0.008.tif")[[-c(16)]]
+
+env.1991 <- raster::stack(c(all.aw.1991[[c("MWMT", "PAS", "SHM")]],
+                            raster::raster("/Volumes/GoogleDrive/My Drive/CSU/Projects/ROFI/analysis/DDI-paper-2022/data/adaptwest_elevation.tif")))
+
+names(env.1991) <- c("MWMT", "PAS", "SHM", "Elev")
+```
+
+## Future
+
+```{r}
+list.env.new.names <- list.files("./data/adaptwest/future/cropped/all32",) %>% gsub(".tif", "", .)
+list.env.new <- list.files("./data/adaptwest/future/cropped/all32", full.names = T)
+
+for(i in 2:length(list.env.new)){
+  
+  Env.future.full <- raster::stack(list.env.new[i])
+  names(Env.future.full) <- names(all.aw.1991)
+  
+  Env.future <- raster::stack(c(Env.future.full[[c("MWMT", "PAS", "SHM")]], raster::raster("/Volumes/GoogleDrive/My Drive/CSU/Projects/ROFI/analysis/DDI-paper-2022/data/adaptwest_elevation.tif")))
+  names(Env.future) <- names(env.1991)
+  
+  
+  
+  env.new.name <- list.env.new.names[i]
+  ssp.years <- strsplit(env.new.name, "[.]")[[1]][3]
+
+  bcrf.biomod.future <- BIOMOD_Projection(
+    modeling.output = bcrf.biomod.full,
+    new.env = Env.future,
+    proj.name = paste0("AW_GlmMax_10runs", ssp.years),
+    selected.models = "all",
+    binary.meth = 'TSS',
+    compress = 'xz',
+    clamping.mask = T,
+    output.format = ".grd"
+  )
+  out.future.proj.name <- paste0("./output/ddi/future/bcrf.AWtop5.jun10aug1.", ssp.years, ".GlmMax.10runs.rds")
+  saveRDS(bcrf.biomod.future, file = out.future.proj.name)
+  
+  bcrf.biomod.ef.future <- BIOMOD_EnsembleForecasting(
+    EM.output = bcrf.biomod.em,
+    projection.output = bcrf.biomod.future)
+  
+  out.future.ef.name <- paste0("./output/ddi/future/bcrf.AWtop5.jun10aug1.", ssp.years, ".ef.GlmMax.10runs.rds")
+  saveRDS(bcrf.biomod.ef.future, out.future.ef.name)
+  
+}
+```
+
+
+
+```{r}
+list.future.efs <- list.files("./output/ddi/future", 
+                              pattern = "*.ef.*",
+                              full.names = T)
+for(i in 1:length(list.future.efs)){
+  bcrf.biomod.ef.future <- readRDS(list.future.efs[i])
+  env.new.name <- strsplit(list.future.efs[i], split = "/")[[1]][5]
+  ssp.years <- strsplit(env.new.name, "[.]")[[1]][4]
+  
+  bcrf.biomod.ef.future.proj <- get_predictions(bcrf.biomod.ef.future)
+  bcrf.biomod.ef.future.proj.mean <- bcrf.biomod.ef.future.proj[[1]]/1000
+  output.raster.name <- paste0("./output/ddi/future/rasters/bcrf.AWtop5.jun10aug1.", ssp.years, ".ef.GlmMax.10runs.raster.rds")
+  saveRDS(bcrf.biomod.ef.future.proj.mean, output.raster.name)
+}
+```
+
+
+## Check elevation changes
+
+```{r}
+## current elevation
+bcrf.biomod.ef.current <- readRDS("~/Desktop/biomod2/output/ddi/bcrf.AWtop5.jun10aug1.current.projection.ef.GlmMax.10runs.rds")
+bcrf.biomod.ef.current.proj <- get_predictions(bcrf.biomod.ef.current)
+bcrf.biomod.ef.current.proj.mean <- bcrf.biomod.ef.current.proj[[1]]/1000
+
+bcrf.biomod.em <- readRDS("~/Desktop/biomod2/output/ddi/bcrf.AWtop5.jun10aug1.em.GlmMax.10runs.rds")
+biomod.eval <- get_evaluations(bcrf.biomod.em)
+thresh <- biomod.eval[[1]][2,2]/1000
+
+bcrf.biomod.ef.current.proj.mean[bcrf.biomod.ef.current.proj.mean < thresh] <- NA
+
+current.df <- data.frame(coordinates(bcrf.biomod.ef.current.proj.mean)) %>%
+    add_column("Values" = values(bcrf.biomod.ef.current.proj.mean)) %>%
+    drop_na() %>%
+  dplyr::select(x,y)
+
+## future elevation
+i <- 7
+ras.future.files <- list.files("~/Desktop/biomod2/output/ddi/future/rasters",
+                               full.names = T,
+                               pattern = "rds$")
+bcrf.biomod.ef.future.proj.mean <- readRDS(ras.future.files[i])
+bcrf.biomod.ef.future.proj.mean[bcrf.biomod.ef.future.proj.mean < thresh] <- NA
+
+future.df <- data.frame(coordinates(bcrf.biomod.ef.future.proj.mean)) %>%
+    add_column("Values" = values(bcrf.biomod.ef.future.proj.mean)) %>%
+    drop_na() %>%
+  dplyr::select(x,y)
+  
+all.elev <- raster::raster("/Volumes/GoogleDrive/My Drive/CSU/Projects/ROFI/analysis/DDI-paper-2022/data/adaptwest_elevation.tif")
+
+current.elev <- extract(all.elev, current.df[,c(1,2)])
+future.elev <- extract(all.elev, future.df[,c(1,2)])
+```
+
+
+```{r}
+elev.t <- t.test(current.elev, future.elev)
+(elev.t)
+```

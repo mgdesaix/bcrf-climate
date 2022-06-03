@@ -1,0 +1,234 @@
+---
+title: 'SDM figures for Brown-capped Rosy-Finch'
+author: "Matt G. DeSaix"
+date: "5/22/2022"
+output: html_document
+---
+
+```{r, echo = F, message = F}
+library(tidyverse)
+library(raster)
+library(rgdal)
+library(spData)
+library(cowplot)
+library(sf)
+library(ggnewscale)
+library(viridis)
+library(biomod2)
+```
+
+read in data for elevation background
+
+```{r}
+elev <- raster("../gradient-forest/data/bcrf-elevation-agg-270m.tif") %>%
+  raster::crop(extent(-108.5, -104.8, 36.4, 42))
+crs(elev) <- "+init=epsg:4326"
+dsm.hill <- hillShade(terrain(elev,opt='slope'), 
+                      terrain(elev,opt='aspect'),
+                      angle = 40, direction = 270) %>%
+  rasterToPoints() %>%
+  data.frame()
+gg.elev <- elev %>%
+  rasterToPoints() %>%
+  data.frame()
+colnames(gg.elev) <- c("x","y", "Elevation")
+
+states.shp <- st_read("../../data/GIS/ne_shapefiles/ne_10m_admin_1_states_provinces_lines.shp") %>%
+  st_as_sfc()
+breeding.shp <- st_read(dsn = "~/Desktop/biomod2/output/final/top6/shapefile") %>%
+  st_as_sfc()
+sample.sites <- read_csv("../../data/ROFI-meta-tidy.csv") %>%
+  filter(Alpha_Code == "BCRF") %>%
+  group_by(Group_ID) %>%
+  summarize(Lat = mean(Lat),
+            Lon = mean(Long),
+            .groups = "drop") %>%
+  filter(Group_ID != "EBMO")
+
+breaks <- 10
+```
+
+
+### Current Raw SDM (1 Figure)
+
+```{r}
+
+bcrf.biomod.ef.current <- readRDS("~/Desktop/biomod2/output/final/top6/bcrf.top6env.jun10aug1.current.projection.ef.top3mods.10runs.rds")
+
+# bcrf.biomod.ef.current <- readRDS("~/Desktop/biomod2/output/ddi/bcrf.AWtop5.jun10aug1.current.projection.ef.GlmMax.10runs.rds")
+bcrf.biomod.ef.current.proj <- get_predictions(bcrf.biomod.ef.current)
+bcrf.biomod.ef.current.proj.mean <- bcrf.biomod.ef.current.proj[[1]]/1000
+
+bcrf.biomod.em <- readRDS("~/Desktop/biomod2/output/ddi/bcrf.AWtop5.jun10aug1.em.GlmMax.10runs.rds")
+# bcrf.biomod.em <- readRDS("~/Desktop/biomod2/output/ddi/bcrf.AWtop5.jun10aug1.em.GlmMax.10runs.rds")
+biomod.eval <- get_evaluations(bcrf.biomod.em)
+thresh <- biomod.eval[[1]][2,2]/1000
+
+bcrf.biomod.ef.current.proj.mean.wNA <- bcrf.biomod.ef.current.proj.mean
+bcrf.biomod.ef.current.proj.mean.wNA[bcrf.biomod.ef.current.proj.mean.wNA < thresh] <- NA
+
+current.df <- data.frame(coordinates(bcrf.biomod.ef.current.proj.mean.wNA)) %>%
+  add_column("Values" = values(bcrf.biomod.ef.current.proj.mean.wNA)) %>%
+  drop_na()
+
+
+p.current <- ggplot() +
+  geom_raster(data = gg.elev, aes(x = x, y = y, fill = Elevation),
+              show.legend = F) +
+  scale_fill_gradientn(name = "Elevation (m)",
+                       colors = gray.colors(n = 256, rev = T, gamma = 1)) +
+  new_scale_fill() +
+  geom_tile(data = current.df,
+            aes(x = x, y = y, fill = Values), 
+            color = "transparent",
+            height = 0.0083334,
+            width = 0.0083334,
+            alpha = 0.9) +
+        scale_fill_gradientn(name = "Habitat suitability",
+                         na.value = "transparent",
+                     colors = magma(breaks),
+                     breaks = c(0, 1),
+                     labels = c("Low", "High"),
+                     limits = c(0,1)) +
+     geom_sf(data = breeding.shp, fill = "transparent", 
+             color = "transparent", size = 0.2) +
+  # geom_point(data = sample.sites, 
+  #           aes(Lon,Lat), size = 2, alpha = 0.8, 
+  #           fill = "grey", color = "black", stroke = 1, shape = 24) +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+    theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12)) +
+    xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+    # guides(fill = guide_legend(override.aes = list(fill = rev(viridis(breaks)),color = rev(viridis(breaks)),size = 1))) +
+  coord_sf()
+p.current
+# ggsave(plot = p.current,
+#        filename = "./plots/bcrf.current.sdm.nosites.magma.png",
+#        height=7, width = 7,
+#        dpi = 300)
+```
+
+
+### Future Raw SDM (8 figures)
+
+```{r}
+ras.future.files <- rev(list.files("~/Desktop/biomod2/output/ddi/future/rasters",
+                               full.names = T,
+                               pattern = "rds$"))
+
+for(i in 1:length(ras.future.files)){
+  bcrf.biomod.ef.future.proj.mean <- readRDS(ras.future.files[i])
+  bcrf.biomod.ef.future.proj.mean[bcrf.biomod.ef.future.proj.mean < thresh] <- NA
+  
+  future.df <- data.frame(coordinates(bcrf.biomod.ef.future.proj.mean)) %>%
+    add_column("Values" = values(bcrf.biomod.ef.future.proj.mean)) %>%
+    drop_na()
+  
+  ## make plot
+  p.future <- ggplot() +
+      geom_raster(data = gg.elev, aes(x = x, y = y, fill = Elevation),
+              show.legend = F) +
+  scale_fill_gradientn(name = "Elevation (m)",
+                       colors = gray.colors(n = 256, rev = T, gamma = 1)) +
+  new_scale_fill() +
+  geom_tile(data = future.df,
+            aes(x = x, y = y, fill = Values), 
+            color = "transparent",
+            height = 0.008333333,
+            width = 0.008333333,
+            alpha = 0.9) +
+        scale_fill_gradientn(name = "Habitat suitability",
+                         na.value = "transparent",
+                     colors = magma(breaks),
+                     breaks = c(0, 1),
+                     labels = c("Low", "High"),
+                     limits = c(0,1)) +
+         geom_sf(data = breeding.shp, fill = "transparent", 
+             color = "transparent", size = 0.2) +
+    # geom_point(data = sample.sites, 
+    #         aes(Lon,Lat), size = 2, alpha = 0.8, 
+    #         fill = "grey", color = "black", stroke = 1, shape = 24) +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+    theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12)) +
+  # scale_alpha(guide=FALSE,range = c(0,1.00)) +
+    # guides(fill = guide_legend(override.aes = list(fill = rev(viridis(breaks)),color = rev(viridis(breaks)),size = 1))) +
+  coord_sf()
+  
+  # get name
+  ssps.years <- strsplit(ras.future.files[i], "/")[[1]][10] %>%
+    gsub(pattern = ".ef.GlmMax.10runs.raster.rds", "", .) %>%
+    gsub("bcrf.AWtop5.jun10aug1.", "", .)
+  
+  
+  future.plot.name <- paste0("./plots/automate/bcrf.future.", ssps.years,".sdm.magma.png")
+  
+    
+    ggsave(plot = p.future, 
+       filename = future.plot.name, 
+       dpi = 300, height = 7, width = 7)
+}
+
+
+p.future
+
+```
+
+```{r}
+
+future.bg.df1 <- future.df %>%
+  filter(ValuesDiscrete == 1)
+future.bg.df2 <- future.df %>%
+  filter(ValuesDiscrete == 2)
+future.tiles.df <- future.df %>%
+  filter(ValuesDiscrete != 2 & ValuesDiscrete != 1 ) %>%
+  add_row((future.df %>% filter(ValuesDiscrete == 1) %>% slice(1))) %>%
+  add_row((future.df %>% filter(ValuesDiscrete == 2) %>% slice(1)))
+
+p.future <- ggplot() +
+  geom_tile(data = future.bg.df1, aes(x = x, y = y),
+            color = viridis(breaks)[1], size = 1) +
+    geom_tile(data = future.bg.df2, aes(x = x, y = y),
+            color = viridis(breaks)[2], size = 1) +
+  geom_raster(data = dsm.hill, aes(x,y,alpha = 1-layer),fill = "gray40") +
+  scale_alpha(guide=FALSE,range = c(0,1.00)) +
+     geom_polygon(data = fortify(states.shp), 
+                  aes(long,lat, group = group), 
+                  fill = "transparent", color = "grey90") +
+  new_scale_fill() +
+  geom_tile(data = future.tiles.df,
+            aes(x = x, y = y, fill = ValuesDiscrete)) +
+    scale_fill_manual(name = "Probability of \n Occurence",
+                     values = viridis(breaks),
+                     labels = c("High", rep("",breaks-2), "Low")) +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+    theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12)) +
+  # scale_alpha(guide=FALSE,range = c(0,1.00)) +
+    guides(fill = guide_legend(override.aes = list(fill = rev(viridis(breaks)),color = rev(viridis(breaks)),size = 1))) +
+  coord_equal()
+p.future
+ggsave(plot = p.future, 
+       filename = "./plots/bcrf.future.sdm.viridis.bw.pdf", 
+       dpi = 300, height = 7, width = 7)
+```
