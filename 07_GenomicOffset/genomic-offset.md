@@ -1,0 +1,3 @@
+# Genomic offset
+
+Using predicted genetic composition from the gradient forest models, it is then possible to calculate the Euclidean distance of future vs current genetic composition. Scripts are provided here for running through iterations of genomic offset calculations for different future environments ([automate-genomic-offset.Rmd](./r-scripts/automate-genomic-offset.Rmd)) and plotting the resulting maps in tidyverse ([automate-genomic-offset-figures.Rmd](./r-scripts/automate-genomic-offset-figures.Rmd)).

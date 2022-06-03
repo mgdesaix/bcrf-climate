@@ -8,9 +8,15 @@ Bioinformatics and analysis scripts for Brown-capped Rosy-Finch (*Leucosticte au
 
 3.  [Population genetics things](https://github.com/mgdesaix/bcrf-climate/blob/main/03_PopulationGenetics/Popgen.md): Principal components analysis, relatedness, linkage disequilibrium, ancestry values, and more!
 
-4.  [Identifying putative adaptive variants](https://github.com/mgdesaix/bcrf-climate/blob/main/04_GEA/GEA.md): Redundancy analysis (RDA), latent factor mixed models (LFMM)
+4.  [Identifying putative adaptive variants](https://github.com/mgdesaix/bcrf-climate/blob/main/04_GEA/GEA.md): Outlier analyses using **redundancy analysis** (RDA) and **latent factor mixed models** (LFMM)
 
-5. [Geographic distribution of putative adaptive variation]
+5. [Landscape turnover of putative adaptive variation](https://github.com/mgdesaix/bcrf-climate/blob/main/05_GradientForest/gradient-forest.md): Using **gradient forest** to predict genetic composition across the breeding range
+
+6. [Ecological niche models](https://github.com/mgdesaix/bcrf-climate/blob/main/06_EcologicalNicheModeling/enm.md): Modeling current and future habitat suitability
+
+7. [Genomic offset](https://github.com/mgdesaix/bcrf-climate/blob/main/07_GenomicOffset/genomic-offset.md)
+
+8. [Niche margin index](https://github.com/mgdesaix/bcrf-climate/blob/main/08_NicheMarginIndex/nmi.md)
 
 
 ### Supercomputing acknowledgements:

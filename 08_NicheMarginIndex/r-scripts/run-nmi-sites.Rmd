@@ -1,0 +1,191 @@
+---
+title: "Automate niche margin plots"
+author: "Matt G. DeSaix"
+date: "5/55/2025"
+output: html_document
+---
+
+```{r}
+library(RColorBrewer)
+library(ggnewscale)
+library(tidyverse)
+require(raster)
+require(ade4)
+require(rgeos)
+# require(ecospat)
+require(ks)
+require(R2jags)
+require(runjags)
+require(ggplot2)
+require(bayesplot)
+require(boa)
+require(mcmcplots)
+require(reshape2)
+require(robustbase)
+library(ggspatial)
+library(sf)
+```
+
+```{r}
+source("./data/NMI-master/functions/NMI_function.R")
+source("./data/NMI-master/functions/mve_function.R")
+```
+
+```{r}
+# breeding.shp <- st_read(dsn = "~/Desktop/biomod2/output/final/top6/shapefile")
+breeding.shp <- st_read(dsn = "../sdms/shapefile")
+all.aw.1991 <- raster::stack("../data/adaptwest_1991-2020_res0.008.tif")[[-c(16)]]
+env.1991 <- raster::stack(c(all.aw.1991[[c("MWMT", "PAS", "SHM")]], raster::raster("../data/adaptwest_elevation.tif"))) %>%
+  crop(breeding.shp) %>%
+  mask(breeding.shp)
+names(env.1991) <- c("MWMT", "PAS", "SHM", "Elev")
+
+sample.sites <- read_csv("../../data/ROFI-meta-tidy.csv") %>%
+  filter(Alpha_Code == "BCRF") %>%
+  group_by(Group_ID) %>%
+  summarize(Lat = mean(Lat),
+            Lon = mean(Long),
+            .groups = "drop") %>%
+  filter(Group_ID != "EBMO")
+```
+
+
+```{r}
+### choose the parameters of the analysis
+grain=10 # resolution of the climatic data. In Broennimann et al. 2020 NCOM: 10,30,60
+envelope="kde" # choise of the envelop methode, "kde" or "mve"
+level=99 # level of inclusion of rare climatic conditions for kde and mve. In Broennimann et al. 2020 NCOM: 99,95,90
+# sp.shp <- shapefile("../SDMs/output/biomod/current_shapefiles/gf5/EMmeanByTSS_current_TSSthresh_0.542_july.shp")
+# sp.shp <- readOGR(dsn = path.expand( "~/Desktop/biomod2/output/final/top6/shapefile"))
+
+presence.coords <- sample.sites %>%
+  dplyr::select(Lon, Lat)
+coordinates(presence.coords) <- ~Lon + Lat
+
+clim.df <- raster::extract(env.1991, presence.coords)
+```
+
+Run PCA
+
+```{r}
+pca <- dudi.pca(clim.df, center = T, scale = T, nf = 2, scannf = F)
+# vals <- raster::extract(clim, sp.shp)[[1]]
+
+# select niche and extract scores in PC space
+sp.scores <- na.omit(suprow(pca,clim.df)$li)
+```
+
+### Delineate niche margins
+
+KDE: Kernel density estimation
+
+```{r}
+fhat <- kde(sp.scores, compute.cont = T)
+c99<-contourLines(fhat$eval.points[[1]],fhat$eval.points[[2]],fhat$estimate,level=fhat$cont[level])
+l99<-list()        
+for(k in 1:length(c99))l99[[k]]=Polygons(list(Polygon(c99[[k]][-1])),ID=k)
+sp.pol.kde=SpatialPolygons(l99)
+sp.pol.kde<-aggregate(sp.pol.kde)
+```
+
+MVE: 
+
+```{r}
+sp.pol.mve <- mve(sp.scores, thresh = level/100, robust = F)
+```
+
+### Current scores
+
+```{r}
+current.env.vals <- raster::extract(env.1991, breeding.shp)
+intros.scores <- suprow(pca, current.env.vals)$li
+NArows<-is.na(intros.scores$Axis1)
+intros.scores<-intros.scores[!NArows,]
+coordinates(intros.scores) <- cbind(intros.scores$Axis1 , intros.scores$Axis2) # DataFrame to SpatialPointsDataFrame
+intro.NMI<-NMI(foc.pop = intros.scores,niche=sp.pol.kde)
+nmi<-intro.NMI$NMI
+extract <- raster::extract(env.1991, breeding.shp, df = TRUE, cellnumbers = TRUE) 
+current.env.df <- xyFromCell(env.1991, cell = extract$cell, spatial = F) %>% 
+  as.data.frame() %>%
+  add_column("NMI" = nmi)
+
+ssps.years <- "current"
+out.name <- paste0("./output/sites/NMI.", ssps.years, ".new.csv")
+# write_csv(current.env.df, out.name)
+```
+
+
+```{r}
+min.nmi <- min(current.env.df$NMI)
+ggplot() +
+  geom_tile(data = current.env.df, aes(x = x, y = y, fill = NMI),
+            color = "transparent") +
+  scale_fill_gradientn(colours = brewer.pal(n = 9, "PRGn")[c(1,5,9)],
+                       values = scales::rescale(c(min.nmi, 0, 1)),
+                       limits = c(min.nmi, 1),
+                       # labels = c("-3.1",
+                       #            "0.0",
+                       #            "1.0"),
+                      na.value = "transparent") +theme_bw()
+```
+
+### Future scores
+
+future environmental data and scores
+
+```{r}
+all.overlays <- list.files("~/Desktop/biomod2/data/adaptwest/future/cropped/all32",
+                           pattern = "*.tif",
+                           full.names = T)
+
+# run example 
+i <- 7
+
+```
+
+
+```{r}
+for(i in 1:length(all.overlays)){
+  ssps.years <- strsplit(all.overlays[i], "[.]") %>% 
+    sapply(., '[[', 3)
+
+  Env.future.full <- raster::stack(all.overlays[i])
+  names(Env.future.full) <- names(all.aw.1991)
+  
+  Env.future <- raster::stack(c(Env.future.full[[c("MWMT", "PAS", "SHM")]], raster::raster("../data/adaptwest_elevation.tif")))
+  names(Env.future) <- names(env.1991)
+  
+  future.env.vals <- raster::extract(Env.future, breeding.shp)
+intros.scores <- suprow(pca, future.env.vals)$li
+NArows<-is.na(intros.scores$Axis1)
+intros.scores<-intros.scores[!NArows,]
+coordinates(intros.scores) <- cbind(intros.scores$Axis1 , intros.scores$Axis2) # DataFrame to SpatialPointsDataFrame
+intro.NMI<-NMI(foc.pop = intros.scores,niche=sp.pol.kde)
+nmi<-intro.NMI$NMI
+extract <- raster::extract(Env.future, breeding.shp, df = TRUE, cellnumbers = TRUE) 
+future.env.df <- xyFromCell(Env.future, cell = extract$cell, spatial = F) %>% 
+  as.data.frame() %>%
+  add_column("NMI" = nmi)
+
+out.name <- paste0("./output/sites/NMI.", ssps.years, ".new.csv")
+write_csv(future.env.df, out.name)
+}
+
+```
+
+
+
+
+```{r}
+min.nmi <- min(future.env.df$NMI)
+ggplot() +
+  geom_tile(data = future.env.df, aes(x = x, y = y, fill = NMI),
+            color = "transparent") +
+  scale_fill_gradientn(colours = brewer.pal(n = 9, "PRGn")[c(1,5,9)],
+                       values = scales::rescale(c(min.nmi, 0, 1)),
+                       limits = c(min.nmi, 1),
+                       # labels = c("-3.1",
+                       #            "0.0",
+                       #            "1.0"),
+                      na.value = "transparent") +theme_bw()
+```

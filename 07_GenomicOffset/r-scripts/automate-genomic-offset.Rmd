@@ -1,0 +1,157 @@
+---
+title: "Automate genomic vulnerability BCRF"
+author: "Matt DeSaix"
+date: "5/20/2022"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+library(gradientForest)
+library(ggpattern)
+library(terra)
+library(sf)
+```
+
+
+```{r}
+states.shp <- readRDS("../../SDMs/data/states.cropped.shp.rds")
+domain <- c(
+  xmin = -110, 
+  xmax = -104,
+  ymin = 36,
+  ymax = 42
+)
+# breeding.shp <- st_read(dsn = "~/Desktop/biomod2/output/final/top6/shapefile") %>% terra::vect()
+breeding.shp <- st_read(dsn = "../sdms/shapefile") %>% terra::vect()
+
+# remove the MAR variable
+all.aw.1991 <- rast("../data/adaptwest_1991-2020_res0.008.tif")[[-c(16)]]
+env.1991 <- c(all.aw.1991[[c("MWMT", "PAS", "SHM")]], rast("../data/adaptwest_elevation.tif")) %>%
+  crop(breeding.shp) %>%
+  mask(breeding.shp)
+names(env.1991) <- c("MWMT", "PAS", "SHM", "Elev")
+```
+
+```{r}
+bcrf.gf <- readRDS("./tuning-params/data/bcrf.rda_lfmm_cand500.env.1991.ntree.100.mtry.5.rds")
+
+all.future.ensembles <- list.files("~/Desktop/biomod2/data/adaptwest/future/cropped/all32",
+                           pattern = "*.tif",
+                           full.names = T)
+all.future.ensembles.names <- list.files("~/Desktop/biomod2/data/adaptwest/future/cropped/all32",
+                           pattern = "*.tif") %>%
+  gsub("adaptwest.all32.", "", .) %>%
+  gsub(".tif", "", .)
+```
+
+```{r}
+
+for(i in 1:length(all.future.ensembles)){
+  env.future <- terra::rast(all.future.ensembles[i])
+  names(env.future) <- names(all.aw.1991)
+  env.future.masked <- c(env.future[[c("MWMT", "PAS", "SHM")]],
+                         terra::rast("../data/adaptwest_elevation.tif")) %>%
+    mask(breeding.shp)
+  names(env.future.masked) <- names(env.1991)
+
+  # sample 100k points
+  set.seed(83)
+  xy.points.fut <- as.data.frame(env.future.masked, xy = T) %>%
+    dplyr::select(c("x", "y")) %>%
+    mutate(lon_lat = paste0(x, "_", y))
+  xy.points.cur <- as.data.frame(env.1991, xy = T) %>%
+     dplyr::select(c("x", "y")) %>%
+    mutate(lon_lat = paste0(x, "_", y))
+  xy.points.inner <- inner_join(xy.points.cur, xy.points.fut, 
+                                by = c("lon_lat" = "lon_lat")) %>% 
+    separate(lon_lat, c("x", "y"), "_") %>%
+    dplyr::select(x,y)
+  # xy.points.100k <- spatSample(env.1991, size = 100000, na.rm = T,
+  #                              xy = T, as.df = T) %>%
+  # as_tibble() %>% dplyr::select(c("x", "y"))
+  xy.points.inner <- as.matrix(sapply(xy.points.inner, as.numeric))
+full.present.100k <- raster::extract(env.1991, xy.points.inner)
+full.future.100k <- raster::extract(env.future.masked, xy.points.inner)
+colnames(xy.points.inner) <- c("Lon", "Lat")
+# iterate through different gradient forest models
+  current_grid <- cbind(xy.points.inner,
+                        predict(bcrf.gf, full.present.100k %>%
+                                as.data.frame())) %>%
+    dplyr::select(-c(1,2))
+
+# current_grid_noNA <- cbind(xy.points.inner,
+#                         predict(bcrf.gf, full.present.100k %>%
+#                                 as.data.frame(),
+#                                 extrap = NA)) %>%
+#   mutate(row_index = as.numeric(row.names(.))) %>% 
+#   drop_na()
+# current_grid <- current_grid_noNA[,c("MWMT", "PAS", "SHM", "Elev")]
+
+
+  future_grid <- cbind(xy.points.inner,
+                       predict(bcrf.gf, full.future.100k %>%
+                               as.data.frame(),
+                               extrap = 0.5)) %>%
+    dplyr::select(-c(1,2))
+# future_grid_noNA <- cbind(xy.points.inner, 
+#                        predict(bcrf.gf, full.future.100k %>%
+#                                as.data.frame(),
+#                                extrap = NA)) %>%
+#   mutate(row_index = as.numeric(row.names(.))) %>% 
+#   drop_na()
+# future_grid <- future_grid_noNA[,c("MWMT", "PAS", "SHM", "Elev")]
+
+  tmp.go.vec <- c()
+  for(j in 1:nrow(current_grid)){
+    tmp.val <- as.numeric(dist(rbind(current_grid[j,], future_grid[j,])))
+    tmp.go.vec <- c(tmp.go.vec, tmp.val)
+  } 
+  genomic.offset <- as.data.frame(xy.points.inner) %>%
+    add_column("GO" = tmp.go.vec)
+  
+  ssp.years <- all.future.ensembles.names[i]
+  # offset name
+  offset.name <- paste0("./genomic-offset/output/extrap-linear/AW.genomic.offset.100k.", ssp.years, ".extrap-linear.csv")
+  write_csv(genomic.offset, offset.name)
+}
+```
+
+Summarize results
+
+```{r}
+offset.files <- list.files("./genomic-offset/output", pattern = ".csv", full.names = T)
+offset.df <- data.frame("Lon" = NA, "Lat" = NA, "Offset" = NA, 
+                        "SSPs" = NA, "Years" = NA)
+
+for(i in 1:length(offset.files)){
+  ssps.years <- strsplit(offset.files[i], "[.]") %>% 
+    sapply(., '[[', 6)
+  ssps <- strsplit(ssps.years, "_")[[1]][1]
+  years <- strsplit(ssps.years, "_")[[1]][2]
+  tmp.df <- read_csv(offset.files[i]) %>% 
+    rename(Offset = GO) %>% 
+    dplyr::select(Lon, Lat, Offset)
+  # out.name <- paste0("./output/genomic_offset/gf5.genomic.offset.mean10runs.", ssps.years,".csv")
+  # write_csv(tmp.df, out.name)
+  tmp.df <- tmp.df %>%
+    add_column("SSPs" = ssps, "Years" = years)
+  offset.df <- rbind(offset.df, tmp.df) %>%
+    drop_na()
+}
+
+p.offset <- offset.df %>%
+  mutate(SSPs = factor(SSPs),
+         Years = factor(Years)) %>%
+    mutate(Years = recode(Years, "2041" = "2050s", "2071" = "2080s")) %>%
+  ggplot() +
+  geom_boxplot(aes(x = Years, y = Offset, fill = SSPs)) +
+  theme_bw() +
+  ylab("Genomic Offset")
+p.offset
+# ggsave(plot = p.offset, filename = "./genomic-offset/plots/extrap-linear/go.ssp.year.comparison.pdf",
+#        width = 6, height = 5)
+```
+
+

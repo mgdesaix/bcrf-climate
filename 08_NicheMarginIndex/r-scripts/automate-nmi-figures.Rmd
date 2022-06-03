@@ -1,0 +1,204 @@
+---
+title: "Automate niche margin plots"
+author: "Matt G. DeSaix"
+date: "5/55/2025"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(raster)
+library(ggpattern)
+library(RColorBrewer)
+library(viridis)
+library(ggspatial)
+library(sf)
+```
+
+
+read in data for elevation background
+
+```{r}
+elev <- raster("../gradient-forest/data/bcrf-elevation-agg-270m.tif") %>%
+  raster::crop(extent(-108.5, -104.8, 36.4, 42))
+crs(elev) <- "+init=epsg:4326"
+dsm.hill <- hillShade(terrain(elev,opt='slope'), 
+                      terrain(elev,opt='aspect'),
+                      angle = 40, direction = 270) %>%
+  rasterToPoints() %>%
+  data.frame()
+gg.elev <- elev %>%
+  rasterToPoints() %>%
+  data.frame()
+colnames(gg.elev) <- c("x","y", "Elevation")
+
+states.shp <- st_read("../../data/GIS/ne_shapefiles/ne_10m_admin_1_states_provinces_lines.shp") %>%
+  st_as_sfc()
+# breeding.shp <- st_read(dsn = "~/Desktop/biomod2/output/final/top6/shapefile") %>%
+#   st_as_sfc()
+breeding.shp <- st_read(dsn = "../sdms/shapefile") %>%
+  st_as_sfc()
+sample.sites <- read_csv("../../data/ROFI-meta-tidy.csv") %>%
+  filter(Alpha_Code == "BCRF") %>%
+  group_by(Group_ID) %>%
+  summarize(Lat = mean(Lat),
+            Lon = mean(Long),
+            .groups = "drop") %>%
+  filter(Group_ID != "EBMO")
+```
+
+read in nmi files
+
+```{r}
+nmi.files <- list.files("./output/sites", pattern = ".csv", full.names = T)
+```
+
+### Example plot
+
+```{r}
+
+nmi <- read_csv(nmi.files[7])
+ 
+ssps.years <- strsplit(nmi.files[1], "[.]")[[1]][3]
+min.nmi <- min(nmi$NMI)
+
+p.nmi <- ggplot() +
+  geom_raster(data = gg.elev, aes(x = x, y = y, fill = Elevation),
+              show.legend = F) +
+  # geom_raster(data = dsm.hill, aes(x = x, y = y, alpha = 1 - layer), fill = "gray50") +
+  scale_fill_gradientn(name = "Elevation (m)",
+                       colors = gray.colors(n = 256, rev = T, gamma = 1)) +
+  ggnewscale::new_scale_fill() +
+  geom_tile(data = nmi, aes(x, y, fill = NMI), 
+            color = "transparent", height = 0.00833, width = 0.00833) +
+scale_fill_gradientn(colours = brewer.pal(n = 9, "PRGn")[c(1,5,9)],
+                       values = scales::rescale(c(min.nmi, 0, 1)),
+                       limits = c(min.nmi, 1),
+                       # labels = c("-3.1",
+                       #            "0.0",
+                       #            "1.0"),
+                      na.value = "transparent") +
+    labs(fill = "NMI") +
+   geom_sf(data = breeding.shp, fill = "transparent", 
+           color = "black", size = 0.2) +
+  geom_sf(data = states.shp, fill = "transparent", 
+          color = "grey95") +
+ # geom_point(data = sample.sites, 
+ #            aes(Lon,Lat), size = 2, alpha = 0.8, 
+ #            fill = "grey", color = "black", stroke = 1, shape = 24) +
+  # scale_shape_manual(values = 24, labels = "", name = "Sampling site") +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+   theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12)) +
+  xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+  coord_sf()
+# ggsave(plot = p.nmi, filename = "./plots/nmi-example.png")
+p.nmi
+```
+
+
+
+
+```{r}
+library(scales)
+for(i in 1:length(nmi.files)){
+  
+  nmi <- read_csv(nmi.files[i])
+  ssps.years <- strsplit(nmi.files[i], "[.]")[[1]][3]
+  min.nmi <- min(nmi$NMI)
+   
+   
+  gg.auto <- ggplot() +
+    geom_raster(data = gg.elev, aes(x = x, y = y, fill = Elevation),
+              show.legend = F) +
+  # geom_raster(data = dsm.hill, aes(x = x, y = y, alpha = 1 - layer), fill = "gray50") +
+  scale_fill_gradientn(name = "Elevation (m)",
+                       colors = gray.colors(n = 256, rev = T, gamma = 1)) +
+  ggnewscale::new_scale_fill() +
+  geom_tile(data = nmi, aes(x, y, fill = NMI), 
+            color = "transparent", height = 0.00833, width = 0.00833) +
+scale_fill_gradientn(colours = brewer.pal(n = 9, "PRGn")[c(1,5,9)],
+                       values = scales::rescale(c(min.nmi, 0, 1)),
+                       limits = c(min.nmi, 1),
+                       # labels = c("-3.1",
+                       #            "0.0",
+                       #            "1.0"),
+                      na.value = "transparent") +
+    labs(fill = "NMI") +
+   geom_sf(data = breeding.shp, fill = "transparent", color = "black", size = 0.2) +
+  # geom_sf(data = states.shp, fill = "transparent", 
+  #         color = "grey10") +
+ # geom_point(data = sample.sites, 
+ #            aes(Lon,Lat), size = 2, alpha = 0.8, 
+ #            fill = "grey", color = "black", stroke = 1, shape = 24) +
+  # scale_shape_manual(values = 24, labels = "", name = "Sampling site") +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+   theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12)) +
+  xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+  coord_sf()
+  
+out.name <- paste0("./plots/sites/nmi.", ssps.years, ".png")
+
+ggsave(plot = gg.auto, filename = out.name, 
+       height = 7, width = 7)
+}
+gg.auto
+```
+
+
+
+### Get current plot with scale relative to future comparison
+
+```{r}
+fut.nmi <- read_csv(nmi.files[7])
+min.nmi <- min(fut.nmi$NMI)
+
+nmi <- read_csv(nmi.files[1])
+ 
+ssps.years <- "current_relative"
+
+p.nmi <- ggplot() +
+  geom_raster(data = gg.elev, aes(x = x, y = y, fill = Elevation),
+              show.legend = F) +
+  scale_fill_gradientn(name = "Elevation (m)",
+                       colors = gray.colors(n = 256, rev = T, gamma = 1)) +
+  ggnewscale::new_scale_fill() +
+  geom_tile(data = nmi, aes(x, y, fill = NMI), 
+            color = "transparent", height = 0.00833, width = 0.00833) +
+scale_fill_gradientn(colours = brewer.pal(n = 9, "PRGn")[c(1,5,9)],
+                       values = scales::rescale(c(min.nmi, 0, 1)),
+                       limits = c(min.nmi, 1),
+                       # labels = c("-3.1",
+                       #            "0.0",
+                       #            "1.0"),
+                      na.value = "transparent") +
+    labs(fill = "NMI") +
+   geom_sf(data = breeding.shp, fill = "transparent", 
+           color = "black", size = 0.2) +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+   theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12)) +
+  xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+  coord_sf()
+# ggsave(plot = p.nmi, filename = "./plots/sites/nmi.current_relativetossp585_2041.png")
+p.nmi
+```

@@ -1,0 +1,272 @@
+---
+title: "Automate genomic vulnerability BCRF"
+author: "Matt DeSaix"
+date: "5/22/2022"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+library(raster)
+library(rgdal)
+library(ggpattern)
+library(RColorBrewer)
+library(viridis)
+library(ggspatial)
+library(sf)
+```
+
+
+
+read in data for elevation background
+
+```{r}
+elev <- raster("./data/bcrf-elevation-agg-270m.tif") %>%
+  raster::crop(extent(-108.5, -104.8, 36.4, 42))
+crs(elev) <- "+init=epsg:4326"
+dsm.hill <- hillShade(terrain(elev,opt='slope'), 
+                      terrain(elev,opt='aspect'),
+                      angle = 40, direction = 270) %>%
+  rasterToPoints() %>%
+  data.frame()
+gg.elev <- elev %>%
+  rasterToPoints() %>%
+  data.frame()
+colnames(gg.elev) <- c("x","y", "Elevation")
+
+states.shp <- st_read("../../data/GIS/ne_shapefiles/ne_10m_admin_1_states_provinces_lines.shp") %>%
+  st_as_sfc()
+# breeding.shp <- st_read(dsn = "~/Desktop/biomod2/output/final/top6/shapefile") %>%
+#   st_as_sfc()
+breeding.shp <- st_read(dsn = "../sdms/shapefile") %>%
+  st_as_sfc()
+sample.sites <- read_csv("../../data/ROFI-meta-tidy.csv") %>%
+  filter(Alpha_Code == "BCRF") %>%
+  group_by(Group_ID) %>%
+  summarize(Lat = mean(Lat),
+            Lon = mean(Long),
+            .groups = "drop") %>%
+  filter(Group_ID != "EBMO")
+```
+
+Get offset values to determine min and max
+
+```{r}
+breaks <- 20
+offset.files <- list.files("./genomic-offset/output/extrap-linear", pattern = ".csv", full.names = T)
+offset.df <- data.frame("Lon" = NA, "Lat" = NA, "Offset" = NA, 
+                        "SSPs" = NA, "Years" = NA)
+
+for(i in 1:length(offset.files)){
+  ssps.years <- strsplit(offset.files[i], "[.]") %>% 
+    sapply(., '[[', 6)
+  ssps <- strsplit(ssps.years, "_")[[1]][1]
+  years <- strsplit(ssps.years, "_")[[1]][2]
+  tmp.df <- read_csv(offset.files[i]) %>%
+      rename(Offset = GO) %>% 
+    add_column("SSPs" = ssps, "Years" = years)
+  offset.df <- rbind(offset.df, tmp.df) %>%
+    drop_na()
+}
+min.offset <- min(offset.df$Offset)
+max.offset <- max(offset.df$Offset)
+low.offset <- paste0("Low \n (", round(min.offset,3), ")")
+high.offset <- paste0("\n High \n (", round(max.offset,3), ")")
+```
+
+## New plot GV
+
+
+### Example plot
+
+
+```{r}
+genomic.offset <- read_csv(offset.files[1]) %>%
+    rename("Offset" = GO)
+rel.min <- min(genomic.offset$Offset)
+rel.max <- max(genomic.offset$Offset)
+
+gg2 <- ggplot() +
+  geom_raster(data = gg.elev, aes(x = x, y = y, fill = Elevation),
+              show.legend = F) +
+  # geom_raster(data = dsm.hill, aes(x = x, y = y, alpha = 1 - layer), fill = "gray50") +
+  scale_fill_gradientn(name = "Elevation (m)",
+                       colors = gray.colors(n = 256, rev = T, gamma = 1)) +
+  ggnewscale::new_scale_fill() +
+  geom_tile(data = genomic.offset, aes(Lon, Lat, fill = Offset), 
+            color = "transparent", alpha = 0.75,
+            height = 0.00833, width = 0.00833) +
+     scale_fill_gradientn(name = "Genomic \n offset",
+                         colors = turbo(breaks),
+                         breaks = c(rel.min, rel.max),
+                         labels = c(format(round(rel.min,2),nsmall = 2),
+                                    format(round(rel.max,2),nsmall = 2)),
+                         limits = c(rel.min, rel.max),
+                         na.value = "transparent") +
+   geom_sf(data = breeding.shp, fill = "transparent", color = "black", size = 0.2) +
+  geom_sf(data = states.shp, fill = "transparent", color = "grey95") +
+ geom_point(data = sample.sites, 
+            aes(Lon,Lat), size = 2, alpha = 0.8, 
+            fill = "grey", color = "black", stroke = 1, shape = 24) +
+  # scale_shape_manual(values = 24, labels = "", name = "Sampling site") +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+   theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12)) +
+  xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+  coord_sf()
+# ggsave(plot = gg2, filename = "./genomic-offset/plots/genomic-offset-example.png")
+gg2
+```
+
+
+
+
+### automate!
+
+
+### black and white
+
+```{r}
+breaks <- 20
+for(i in 1:length(offset.files)){
+  ssps.years <- strsplit(offset.files[i], "[.]") %>% 
+    sapply(., '[[', 6)
+  genomic.offset <- read_csv(offset.files[i]) %>%
+    rename("Offset" = GO)
+rel.min <- min(genomic.offset$Offset)
+rel.max <- max(genomic.offset$Offset)
+
+gg.auto <- ggplot() +
+  geom_raster(data = gg.elev, aes(x = x, y = y, fill = Elevation),
+              show.legend = F) +
+  # geom_raster(data = dsm.hill, aes(x = x, y = y, alpha = 1 - layer), fill = "gray50") +
+  scale_fill_gradientn(name = "Elevation (m)",
+                       colors = gray.colors(n = 256, rev = T, gamma = 1)) +
+  ggnewscale::new_scale_fill() +
+  geom_tile(data = genomic.offset, aes(Lon, Lat, fill = Offset), 
+            color = "transparent", alpha = 0.75) +
+     scale_fill_gradientn(name = "Genomic \n offset",
+                         colors = turbo(breaks),
+                         breaks = c(rel.min, rel.max),
+                         labels = c(format(round(rel.min,2),nsmall = 2),
+                                    format(round(rel.max,2),nsmall = 2)),
+                         limits = c(rel.min, rel.max),
+                         na.value = "transparent") +
+   geom_sf(data = breeding.shp, fill = "transparent", color = "black", size = 0.2) +
+  # geom_sf(data = states.shp, fill = "transparent", color = "grey10") +
+ # geom_point(data = sample.sites, 
+ #            aes(Lon,Lat), size = 2, alpha = 0.8, 
+ #            fill = "grey", color = "black", stroke = 1, shape = 24) +
+  # scale_shape_manual(values = 24, labels = "", name = "Sampling site") +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+   theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12)) +
+  xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+  coord_sf()
+out.name <- paste0("./genomic-offset/plots/extrap-linear/genomic-offset.", ssps.years, ".extrap-linear.png")
+ggsave(plot = gg.auto, 
+       filename = out.name)
+  
+}
+```
+
+
+
+
+### Making subset of GO figures
+
+```{r}
+offset.files.sub <- c("./genomic-offset/output/extrap-linear/AW.genomic.offset.100k.ssp585_2041.csv",
+                      "./genomic-offset/output/extrap-linear/AW.genomic.offset.100k.ssp585_2071.csv",
+                      "./genomic-offset/output/extrap-compressed-0/AW.genomic.offset.100k.ssp585_2041.compressed-0.csv",
+                      "./genomic-offset/output/extrap-compressed-0/AW.genomic.offset.100k.ssp585_2071.compressed-0.csv")
+
+offset.sub.list <- list()
+for(i in 1:length(offset.files.sub)){
+  extrap <- strsplit(offset.files.sub[i], "/")[[1]][4] %>%
+    gsub("extrap-", "", .)
+  tmp.name <- strsplit(offset.files.sub[i], "/")[[1]][5]
+  ssps.years <- strsplit(tmp.name, "[.]")[[1]][5]
+  
+  offset.sub.list[[i]] <- read_csv(offset.files.sub[i]) %>%
+    rename("Offset" = GO) %>%
+    add_column(Extrap = extrap,
+               Years = ssps.years,
+               Group = i)
+    
+
+}
+offset.sub.df <- do.call(rbind,offset.sub.list)
+```
+
+### Plotting with relative scale
+
+```{r}
+min.go <- min(offset.sub.df$Offset)
+max.go <- max(offset.sub.df$Offset)
+breaks <- 20
+
+for(i in unique(offset.sub.df$Group)){
+  ssps.years <- unique(offset.sub.df %>% 
+                         filter(Group == i) %>% 
+                         dplyr::select(Years)) %>% 
+    as.character()
+  extrap <- unique(offset.sub.df %>% 
+                         filter(Group == i) %>% 
+                         dplyr::select(Extrap)) %>% 
+    as.character()
+
+  gg.auto <- offset.sub.df %>% 
+                         filter(Group == i) %>%
+    ggplot() +
+  geom_raster(data = gg.elev, aes(x = x, y = y, fill = Elevation),
+              show.legend = F) +
+  # geom_raster(data = dsm.hill, aes(x = x, y = y, alpha = 1 - layer), fill = "gray50") +
+  scale_fill_gradientn(name = "Elevation (m)",
+                       colors = gray.colors(n = 256, rev = T, gamma = 1)) +
+  ggnewscale::new_scale_fill() +
+  geom_tile(aes(Lon, Lat, fill = Offset), 
+            color = "transparent", alpha = 0.75) +
+     scale_fill_gradientn(name = "Genomic \n offset",
+                         colors = turbo(breaks),
+                         breaks = c(min.go, max.go),
+                         labels = c(format(round(min.go,2),nsmall = 2),
+                                    format(round(max.go,2),nsmall = 2)),
+                         limits = c(min.go, max.go),
+                         na.value = "transparent") +
+   geom_sf(data = breeding.shp, fill = "transparent", color = "black", size = 0.2) +
+  # geom_sf(data = states.shp, fill = "transparent", color = "grey10") +
+ geom_point(data = sample.sites, 
+            aes(Lon,Lat), size = 2, alpha = 0.8, 
+            fill = "grey", color = "black", stroke = 1, shape = 24) +
+  # scale_shape_manual(values = 24, labels = "", name = "Sampling site") +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+   theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12)) +
+  xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+  coord_sf()
+out.name <- paste0("./genomic-offset/plots/relative/genomic-offset.", ssps.years, ".", extrap, ".relative.png")
+ggsave(plot = gg.auto, 
+       filename = out.name)
+  
+}
+```
