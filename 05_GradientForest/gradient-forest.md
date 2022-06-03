@@ -1,5 +1,7 @@
 # Identifying putative adaptive variation turnover across the landscape
 
+Gradient forest is a landscape genetics approach to modeling turnover of genetic variation across the landscape due to changing environment. Here, I present methods for comparing baseline environmental data, tuning gradient forest parameters
+
 ## Gradient forest analysis.
 
 ### Comparing baseline environmental data sets
@@ -38,8 +40,7 @@ We identified convergence at 100 trees (*ntree* = 100) and maximum accuracy occu
 
 Above, the `gradientForest` function creates an object, which you can find extensive detail about from the developers (https://rdrr.io/rforge/gradientForest/man/gradientForest.html). We then used this to predict genetic composition from unsampled locations, using the identified turnover functions. Evaluating the turnover functions in gradient forest is **essential** to understanding what is going on in the model. For example, are the patterns step-wise or is there sharp turnover at a specific environmental gradient?? 
 
-Using the turnover functions, we then predicted genetic composition to the remaining portions of the unsampled breeding range. We created biplots that show the influence of environmental predictors on genetic variation turnover and plotted the predicted genetic composition across the landscape. The details of our code for those analyses can be found here: [Gradient forest markdown](./r-scripts/gradient-forest-general.Rmd)
-
+Using the turnover functions, we then predicted genetic composition to the remaining portions of the unsampled breeding range. We created biplots that show the influence of environmental predictors on genetic variation turnover and plotted the predicted genetic composition across the landscape. The details of our code for those analyses can be found here: [Gradient forest markdown](./r-scripts/gradient-forest-general.Rmd). This code also shows how to make nice biplots and map predicted genetic composition in `tidyverse`. Customizing turnover function plots and creating heat maps for variable importance is provided in [gradient-forest-turnover-and-heat.Rmd](./r-scripts/gradient-forest-turnover-and-heat.Rmd).
 
 
 ## References

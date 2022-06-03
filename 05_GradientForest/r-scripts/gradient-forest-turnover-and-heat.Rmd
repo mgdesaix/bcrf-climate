@@ -1,0 +1,161 @@
+---
+title: "Gradient forest"
+author: "Matt G. DeSaix"
+date: "5/17/2022"
+output: pdf_document
+---
+
+Final gradient forest stuff. The paramters *mtry* and *ntree* have been chosen based on the top importance of the tuning parameter test. Went with the parameters that provided the highest importance to the top variable, *PAS*.
+
+mtry: 5
+ntree: 100
+
+
+```{r, message = F, warning = F}
+library(tidyverse)
+library(gradientForest)
+library(terra)
+library(sf)
+library(ggspatial)
+library(raster)
+```
+
+### combining gradient forest objects
+
+```{r}
+cand.gf <- readRDS("./tuning-params/data/bcrf.rda_lfmm_cand500.env.1991.ntree.100.mtry.5.rds")
+rand.gf <- readRDS("./tuning-params/cand-random/1991_2020/bcrf.rda_lfmm_cand500.env.1991.ntree.100.mtry.5.random.8.rds")
+full.gf <- readRDS("~/Downloads/bcrf.400k.env.1991.ntree.100.mtry.5.rds")
+
+```
+
+# Creating cumulative importance data frames
+
+### Candidate Snps
+
+```{r}
+preds <- names(cand.gf$overall.imp)
+cand.preds.list <- list()
+for(i in preds){
+  CU <- cumimp(cand.gf, i)
+  cand.preds.list[[i]] <- data.frame(x = CU$x,
+                                     y = CU$y,
+                                     pred = i,
+                                     snps = "cand")
+}
+cand.preds.df <- do.call(rbind, cand.preds.list)
+```
+
+### Random SnPs
+
+```{r}
+rand.files <- list.files("./tuning-params/cand-random/1991_2020/",
+                         full.names = T)
+rand.preds.list <- list()
+for(i in preds){
+  x.list <- list()
+  for(j in 1:length(rand.files)){
+    rand.gf <- readRDS(rand.files[j])
+    CU <- cumimp(rand.gf, i)
+    isub <- seq(1, length(CU$x), len=pmin(500,length(CU$x)))
+    x.list[[j]] <- data.frame(x = as.character(CU$x[isub]), y = CU$y[isub])
+    
+  }
+  tmp.df <- purrr::reduce(x.list, dplyr::left_join, by = "x") %>%
+    drop_na()
+  y <- apply(tmp.df[,2:ncol(tmp.df)], 1, mean)
+  rand.preds.list[[i]] <- data.frame(x = tmp.df$x,
+                                     y = y,
+                                     pred = i,
+                                     snps = "rand")
+}
+rand.preds.df <- do.call(rbind, rand.preds.list)
+```
+
+### All snps
+
+```{r}
+full.preds.list <- list()
+for(i in preds){
+  CU <- cumimp(full.gf, i)
+  isub <- seq(1, length(CU$x), len=pmin(500,length(CU$x)))
+  full.preds.list[[i]] <- data.frame(x = CU$x[isub],
+                                     y = CU$y[isub],
+                                     pred = i,
+                                     snps = "full")
+}
+full.preds.df <- do.call(rbind, full.preds.list)
+```
+
+
+## Combine cumulative importance dfs and plot
+
+```{r}
+all.snps.df <- rbind(cand.preds.df, rand.preds.df, full.preds.df) %>%
+  mutate(x = as.numeric(x))
+three.colors <- c("#7fc97f", "#beaed4", "#fdc086")
+y.max <- max(all.snps.df$y)
+
+p.imp <- all.snps.df %>%
+  filter(pred == "MWMT") %>%
+  ggplot() +
+  geom_step(aes(x=x,y=y,color=snps), size = 1) +
+  scale_color_manual(values = three.colors) +
+  theme_bw() +
+  ylab("Cumulative Importance") +
+  xlab("MWMT") +
+  ylim(c(0,y.max))
+# ggsave(plot = p.imp, filename = "./plots/turnover-functions/combined-snp-sets/mwmt-turnover-snps.png", width = 6, height = 4)
+p.imp
+```
+
+
+
+```{r}
+plot(full.gf, plot.type = "C", show.overall = T, 
+     show.species = F, imp.vars = c("PAS", "MWMT", "SHM", "Elev", "MEM1"), common.scale = T)
+```
+
+```{r}
+plot(full.gf, plot.type = "O")
+```
+
+### heat plot
+
+```{r}
+rand.files <- list.files("./tuning-params/cand-random/1991_2020/",
+                         full.names = T)
+rand.preds.list <- list()
+
+for(i in 1:length(rand.files)){
+  rand.preds.list[[i]] <- importance(readRDS(rand.files[i]), "Weighted")
+}
+rand.imp.mean <- do.call(rbind, rand.preds.list) %>%
+  apply(., 2, mean)
+
+weighted.r2s <- rbind(importance(full.gf, "Weighted"),
+                      importance(cand.gf, "Weighted"),
+                      rand.imp.mean) %>%
+  as.data.frame() %>%
+  add_column(Group = c("All", "Candidate", "Random")) %>%
+  pivot_longer(cols = PAS:Elev, names_to = "Predictor", values_to = "Importance")
+
+all.var.heat <- all.var.imp %>%
+  filter(ntree == 100 & mtry == 5 & Year == "1991") %>%
+  mutate(Predictor = factor(Predictor, levels = c("MEM1", "Elev", "SHM", "MWMT", "PAS")),
+         Group = recode(Group, AllSNPs_1991 = "All",
+                        CandSNPs_1991 = "Candidate",
+                        CandSNPs_Random_1991 = "Random")) %>%
+  rename(`SNP sets` = Group) %>%
+ggplot(aes(`SNP sets`, Predictor)) +
+  geom_tile(aes(fill = Importance)) +
+  scale_fill_distiller(palette = "BuGn", direction = 1) +
+  theme_bw()
+
+# ggsave(filename = "./tuning-params/plots/var.imp.all.heat.bugn.png",
+#        plot = all.var.heat, width = 6, height = 4)
+all.var.heat
+```
+
+
+

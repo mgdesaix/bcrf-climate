@@ -1,0 +1,3 @@
+# Ecological Niche Models in R
+
+Observational data of Brown-capped Rosy-Finches were obtained from the citizen science database eBird (https://ebird.org/science/use-ebird-data/download-ebird-data-products). Detailed instructions for creating presence/absence data from eBird observations are provided [here](https://cornelllabofornithology.github.io/ebird-best-practices/ebird.html). All ecological niche modeling was performed in the R package `biomod2` ().
