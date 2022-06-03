@@ -1,7 +1,7 @@
 ---
-title: "Automate niche margin plots"
+title: "Calculate niche margins"
 author: "Matt G. DeSaix"
-date: "5/55/2025"
+date: "6/3/2023"
 output: html_document
 ---
 
