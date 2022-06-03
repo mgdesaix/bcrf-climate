@@ -1,0 +1,308 @@
+---
+title: "Gradient forest"
+author: "Matt G. DeSaix"
+date: "5/17/2022"
+output: pdf_document
+---
+
+Final gradient forest stuff. The paramters *mtry* and *ntree* have been chosen based on the top importance of the tuning parameter test. Went with the parameters that provided the highest importance to the top variable, *PAS*.
+
+mtry: 5
+ntree: 100
+
+
+```{r}
+library(tidyverse)
+library(gradientForest)
+library(terra)
+library(sf)
+library(ggspatial)
+library(raster)
+```
+
+
+```{r}
+bcrf.gf <- readRDS("./tuning-params/data/bcrf.rda_lfmm_cand500.env.1991.ntree.100.mtry.5.rds")
+
+sample.sites <- read_csv("../../data/ROFI-meta-tidy.csv") %>%
+  filter(Alpha_Code == "BCRF") %>%
+  group_by(Group_ID) %>%
+  summarize(Lat = mean(Lat),
+            Lon = mean(Long),
+            .groups = "drop") %>%
+  filter(Group_ID != "EBMO")
+```
+
+```{r}
+plot(bcrf.gf)
+```
+
+### Preciptation as snow (PAS)
+
+```{r}
+plot(bcrf.gf, plot.type = "C", imp.vars = c("PAS"), 
+     show.overall = F, plot.args = list(ylim = c(0,1)))
+```
+
+```{r}
+plot(bcrf.gf, plot.type = "C", show.overall = T, 
+     show.species = F,
+     imp.vars = "PAS")
+```
+
+
+
+
+### Mean warmest temp
+
+```{r}
+plot(bcrf.gf, plot.type = "C", imp.vars = c("MWMT"), 
+     show.overall = F, plot.args = list(ylim = c(0,1)))
+```
+
+```{r}
+plot(bcrf.gf, plot.type = "C", show.overall = T, 
+     show.species = F,
+     imp.vars = "MWMT")
+```
+
+## Gradient forest map
+
+```{r, echo = F}
+breeding.shp <- st_read(dsn = "~/Desktop/biomod2/output/final/top6/shapefile") %>%
+  vect()
+
+# env.1961 <- c(terra::rast("../data/adaptwest_1961-1990.tif")[[c("MWMT", "PAS", "SHM")]], terra::rast("../data/adaptwest_elevation.tif")) %>%
+#   terra::mask(breeding.shp)
+env.1991 <- c(terra::rast("../data/adaptwest_1991-2020_res0.008.tif")[[c("MWMT", "PAS", "SHM")]], terra::rast("../data/adaptwest_elevation.tif")) %>%
+  crop(breeding.shp) %>%
+  mask(breeding.shp)
+names(env.1991) <- c("MWMT", "PAS", "SHM", "Elev")
+```
+
+```{r}
+# randompoints.bioclim <- spatSample(env.1991, size = 10000, 
+#                                     method = "random",
+#                                       na.rm = T, xy = T, as.df = T)
+randompoints.bioclim <- as.data.frame(env.1991, xy = T)
+
+# select everything except lat/lon
+predictors_uncor <- colnames(randompoints.bioclim)[3:ncol(randompoints.bioclim)]
+
+current_grid <- cbind(randompoints.bioclim[,c("x", "y")],
+                      predict(bcrf.gf, randompoints.bioclim[,predictors_uncor] %>%
+                                              as.data.frame()))
+PCs <- prcomp(current_grid[,c(3:6)]) #run your PCs on your top four variables
+# PCs <- prcomp(current_grid[,c(3:8)])
+# set up a colour palette for the mapping
+a1 <- PCs$x[,1]
+a2 <- PCs$x[,2]
+a3 <- PCs$x[,3]
+r <- a1+a2
+b <- a3+a2-a1
+g <- -a2
+r <- (r-min(r)) / (max(r)-min(r)) * 255
+g <- (g-min(g)) / (max(g)-min(g)) * 255
+b <- (b-min(b)) / (max(b)-min(b)) * 255
+cols <- rgb(r,g,b,max=255)
+cols2 <- col2rgb(cols)
+cols3 <- t(cols2)
+gradients <- cbind(current_grid[c("x","y")],cols3)
+
+
+##Biplot specifics
+nvs <- dim(PCs$rotation)[1]
+# vec <- c("bio19", "bio3", "bio15", "ffdays", "bio11")
+# vec <- c("BIO18", "BIO19")
+# I added the code below
+vec <- rownames(PCs$rotation)
+lv <- length(vec)
+vind <- rownames(PCs$rotation) %in% vec
+scal <-100
+xrng <- range(PCs$x[, 1], PCs$rotation[, 1]/scal) *1
+yrng <- range(PCs$x[, 2], PCs$rotation[, 2]/scal) *1
+
+
+```
+
+
+```{r}
+biplot.site <- predict(bcrf.gf)
+PCsites <- predict(PCs, biplot.site) %>%
+  as.data.frame() %>%
+  add_column(Group_ID = sample.sites$Group_ID)
+
+pt.cols <- rgb(r, g, b, maxColorValue = 255)
+pcs.df <- as.data.frame(PCs$x) %>%
+  mutate(group = paste0("Group_", PC1, "_", PC2))
+
+line.scale <- 10
+lines.env <- as.data.frame(PCs$rotation)/line.scale
+
+p.biplot <- pcs.df %>%
+  ggplot() +
+  geom_point(aes(x = PC1, y = PC2, 
+                 color = factor(group, levels = group)), 
+             show.legend = F,
+             size = 0.5, shape = 15) +
+  scale_color_manual(values = pt.cols) +
+  geom_point(data = PCsites, aes(x = PC1, y=PC2), 
+             shape = 24, size = 6, fill = "grey", stroke = 2) +
+  geom_segment(aes(x = 0, xend = PC1, y = 0, yend = PC2),
+               size = 2,
+               data = lines.env,
+               arrow = grid::arrow(length = unit(0.2, "cm")),
+               inherit.aes = F) +
+  theme_bw() +
+  coord_equal() +
+  theme(
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "transparent",colour = NA),
+        plot.background = element_rect(fill = "transparent",colour = NA),
+        axis.ticks = element_blank(),
+        axis.text = element_blank()
+        )
+
+# ggsave(plot = p.biplot, filename = "./plots/biplot.png", width = 8, height = 6)
+p.biplot
+```
+
+
+
+
+
+```{r}
+plot((PCs$x[, c(1,2)]), xlim = xrng, ylim = yrng, pch = ".", cex = 4, col = rgb(r, g, b, max = 255), asp = 1)
+points(PCs$rotation[!vind, c(1,2)]/scal, pch = "+")
+arrows(rep(0, lv), rep(0, lv), 
+       PCs$rotation[vec,1]/scal*10, 
+       PCs$rotation[vec, 2]/scal*10, length = 0.1)
+jit <- 0.02
+text(PCs$rotation[vec, 1]/scal + jit * sign(PCs$rotation[vec,1]), PCs$rotation[vec, 2]/scal + jit * sign(PCs$rotation[vec,2]), labels = vec)
+```
+
+
+
+### Pretty map
+
+```{r}
+library(raster)
+elev <- raster("./data/bcrf-elevation-agg-270m.tif") %>%
+  raster::crop(extent(-108.5, -104.8, 36.4, 42))
+crs(elev) <- "+init=epsg:4326"
+dsm.hill <- hillShade(terrain(elev,opt='slope'), 
+                      terrain(elev,opt='aspect'),
+                      angle = 40, direction = 270) %>%
+  rasterToPoints() %>%
+  data.frame()
+gg.elev <- elev %>%
+  rasterToPoints() %>%
+  data.frame()
+colnames(gg.elev) <- c("x","y", "Elevation")
+
+states.shp <- st_read("../../data/GIS/ne_shapefiles/ne_10m_admin_1_states_provinces_lines.shp") %>%
+  st_as_sfc()
+breeding.shp <- st_read(dsn = "~/Desktop/biomod2/output/final/top6/shapefile") %>%
+  st_as_sfc()
+```
+
+```{r}
+bcrf.map <- as.data.frame(gradients)
+
+gg <- ggplot() +
+  geom_raster(data = gg.elev, aes(x,y,fill = Elevation), alpha = 0.9) +
+  geom_raster(data = dsm.hill, aes(x,y,alpha = 1-layer),fill = "gray50") +
+  scale_alpha(guide='none',range = c(0,1.00)) +
+  # scale_fill_gradientn(name = "Elevation (meters)", colors = terrain.colors(100)) +
+  scale_fill_gradientn(name = "Elevation (m)",
+                       colors = gray.colors(n = 100,start = 0.01, end = 0.8, rev = T)) +
+  geom_tile(data = data.frame(bcrf.map), 
+            aes(x,y), fill = rgb(r,g,b, max = 255),
+            height = 0.0223, width = 0.0223,
+            show.legend = F,
+            alpha = 0.75) +
+   geom_sf(data = breeding.shp, fill = "transparent", color = "black", size = 0.2) +
+  geom_sf(data = states.shp, fill = "transparent", color = "grey90") +
+ geom_point(data = sample.sites, 
+            aes(Lon,Lat), size = 3, alpha = 0.8, 
+            fill = "grey", color = "black", stroke = 2, shape = 24) +
+  # scale_shape_manual(values = 24, labels = "", name = "Sampling site") +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+   theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12)) +
+  xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+  coord_sf()
+gg
+```
+
+
+### Beta map
+
+```{r}
+bcrf.map <- as.data.frame(gradients)
+
+gg2 <- ggplot() +
+  geom_raster(data = gg.elev, aes(x = x, y = y, fill = Elevation)) +
+  # geom_raster(data = dsm.hill, aes(x = x, y = y, alpha = 1 - layer), fill = "gray50") +
+  scale_fill_gradientn(name = "Elevation (m)",
+                       colors = gray.colors(n = 256, rev = T, gamma = 1)) +
+  geom_tile(data = data.frame(bcrf.map), 
+            aes(x,y), fill = rgb(r,g,b, max = 255),
+            height = 0.0223, width = 0.0223,
+            show.legend = F,
+            alpha = 0.6) +
+   geom_sf(data = breeding.shp, fill = "transparent", color = "black", size = 0.2) +
+  geom_sf(data = states.shp, fill = "transparent", color = "grey10") +
+ geom_point(data = sample.sites, 
+            aes(Lon,Lat), size = 2, alpha = 0.8, 
+            fill = "grey", color = "black", stroke = 1, shape = 24) +
+  # scale_shape_manual(values = 24, labels = "", name = "Sampling site") +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+   theme(panel.grid = element_blank(),
+         axis.line = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 14),
+         axis.text = element_text(size = 12),
+         legend.position = "none") +
+  xlim(c(-108.5, -104.8)) +
+  ylim(c(36.4,42)) +
+  coord_sf()
+# ggsave(plot = gg2, filename = "./plots/gf-map/gradient-forest-NOshade_gamma_1.png")
+gg2
+```
+
+
+### customizing cumulative importance plots
+
+```{r}
+cand.gf <- readRDS("./tuning-params/data/bcrf.rda_lfmm_cand500.env.1991.ntree.100.mtry.5.rds")
+rand.gf <- readRDS("./tuning-params/cand-random/1991_2020/bcrf.rda_lfmm_cand500.env.1991.ntree.100.mtry.5.random.8.rds")
+full.gf <- readRDS("~/Downloads/bcrf.400k.env.1991.ntree.100.mtry.5.rds")
+
+```
+
+
+standard plot
+
+```{r}
+plot(cand.gf, plot.type = "C", show.overall = T, 
+     show.species = F, imp.vars = c("PAS", "MWMT", "SHM", "Elev", "MEM1"), common.scale = T)
+```
+
+```{r}
+cand.pas.dens.df <- data.frame(x = cand.gf$dens$PAS$x,
+                               y = cand.gf$dens$PAS$y)
+
+ggplot(cand.pas.dens.df, aes(x = x, y = y)) +
+  geom_line()
+```
+
