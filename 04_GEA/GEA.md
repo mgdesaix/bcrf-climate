@@ -38,6 +38,44 @@ To correct for population structure in LFMM, I calculated ancestry values with t
 
 I used LFMMs for each of the four environmental variables and combined all SNPs from each of the univariate tests in a set of the LFMM candidate SNPs (see [example LFMM script](./r-scripts/run_lfmm_array_1991_K2.r))
 
+## Candidate SNPs
+
+The intersection of SNPs identified in both RDA and LFMM provided the candidate SNP set for looking at putatively adaptive variant turnover with gradient forest. The 1961-1990 environmental data set had 501 SNPs and the 1991-2020 environmental data set had 436 SNPs. 128 SNPs were unique to either data set.
+
+## Gradient forest analysis.
+
+### Comparing baseline environmental data sets
+
+Genetic-environment association analyses assume that populations are at an adaptive equilibrium with the environment being tested. However there may be adaptational lag, especially in long-lived species, which means adaptive genetic variation reflects past selective pressures. We compared both environmental data sets in order to see if there was different inference from the environmental predictors if adaptational lag was occurring (using the 1961-1990 baseline) or wasn't occurring (1991-2020). Specifically, we created gradient forest models (see below for running) for both time periods and compared environmental predictor importance. Our results showed similar patterns of the relative importance of environmental predictors, thus suggesting, a minimal influence of considering adaptational lag. Therefore, we included subsequent analyses with the 1991-2020 data set, which included the time period for which our samples were collected.
+
+<img src="images/var.imp.baseline.envs.png" alt="Baseline environments" width="600"/>
+
+### Gradient forest tuning parameters
+
+Gradient forest is an algorithm that builds on random forests. In its use for landscape genetics, genetic data are the response, while environmental and spatial data are the predictors. Two of the main parameters are 1) the number of trees grown in the model (*ntree*) and 2) the subset of predictors randomly selected for a tree (*mtry*; **side note: In case you were wondering, using all predictors is basically the machine learning method of bagging**). 
+
+As in all machine learning applications, a variety of parameters should be tested to see what is most appropriate for the data (though, admittedly, in ecological applications this is commonly not done). To evaluate, we tested *ntree* from 10 to 1000 by 10s, and *mtry* from 1 to 5 (all predictors). This was done on the cluster running our [tuning parameter job array script](./slurm-scripts/get-gradient-forest-tuning.sh) which reads in the parameter combination of a single run to an [R script for gradient forest](./r-scripts/run-gradient-forest-tuning.r). The R script basically runs gradient forest as recommended by the developers (Ellis et al. 2012), with varying the parameters. Simplified it looks like this:
+
+```r
+bcrfForest <- gradientForest(cbind(Env.pred, Gen.resp),
+                                 predictor.vars = colnames(Env.pred[,-1]),
+                                 response.vars = colnames(Gen.resp),
+                                 ntree = ntree,
+                                 mtry = mtry,
+                                 transform = NULL,
+                                 compact = T,
+                                 maxLevel = lev,
+                                 corr.threshold = 0.5,
+                                 trace = F)
+```
+
+where *ntree* and *mtry* are being specified by input variables. 
+
+We identified convergence at 100 trees (*ntree* = 100) and maximum accuracy occurring with all 5 predictors used (*mtry* = 5)
+
+
+<img src="images/p.var.imp.facet.png" alt="Tuning parameters" width="600"/>
+
 
 
 
