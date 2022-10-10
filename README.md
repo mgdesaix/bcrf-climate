@@ -1,6 +1,6 @@
 # bcrf-climate
 
-Bioinformatics and analysis scripts for Brown-capped Rosy-Finch (*Leucosticte australis*) climate change research:
+Bioinformatics and analysis scripts for Brown-capped Rosy-Finch (*Leucosticte australis*) climate change research that is published and open access [DeSaix et al. 2022. Diversity and Distributions](https://onlinelibrary.wiley.com/doi/full/10.1111/ddi.13628):
 
 1.  [Data preprocessing](https://github.com/mgdesaix/bcrf-climate/blob/master/01_Preprocessing/Preprocessing.md): Includes trimming FASTQs, mapping to reference, merging, marking PCR duplicates
 
