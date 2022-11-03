@@ -32,7 +32,9 @@ I first create a file `scaffold-lengths` that has two columns: 1) Scaffold names
 >Scaffold_1__1_contigs__length_151072562
 ```
 
-Be extracting the scaffold name and length, I then can get a file like this:
+The `faidx` function in [samtools](http://www.htslib.org/doc/samtools-faidx.html) can be used to get the scaffold length of the reference genome (Note: Even though the scaffold names have a length listed, this doesn't necessarily align with the actual scaffold length produced from the index `faidx` function. This will produce downstream errors if you try to use the length from the scaffold name).
+
+After extracting the scaffold name and length, I then can get a file like this:
 
 ```sh
 % head -n 3 scaffold-lengths.txt
