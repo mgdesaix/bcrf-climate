@@ -85,22 +85,24 @@ Scaffold_1__1_contigs__length_151072562:2000001-3000000	1000000
 Cool. So now all I need is the awk code to read through the lengths of the second column, and spit out the scaffold names/regions into files until that file totals to 2 MB, and then it will spit out scaffold names/regions to a new file, on and on.
 
 ```sh
- awk 'BEGIN {id=1; tot=0} {if(tot<2e6) {tot+=$2; k=sprintf("%03d",id); print $1 >> "interval2mb_" k ".txt"} else {id+=1; tot=$2; k=sprintf("%03d", id); print $1 >> "interval2mb_" k ".txt";}}' rofi-scaffold-interval-lengths-1mb.txt
+ awk 'BEGIN {id=1; tot=0} {if(tot<2e6) {tot+=$2; k=sprintf("%03d",id); print $1 >> "interval2mb_" k ".list"} else {id+=1; tot=$2; k=sprintf("%03d", id); print $1 >> "interval2mb_" k ".list";}}' rofi-scaffold-interval-lengths-1mb.txt
 ```
+
+**Note:** The *.list* suffix is necessary for GATK - otherwise headaches insue.
 
 ```sh
 --% ls interval2mb_* | tail -n 3
-interval2mb_517.txt
-interval2mb_518.txt
-interval2mb_519.txt
+interval2mb_517.list
+interval2mb_518.list
+interval2mb_519.list
 ```
 
 The first files are short, with just the two 1 MB regions, and the last files are long with lots of short scaffolds:
 
 ```sh
---% wc -l interval2mb_001.txt
+--% wc -l interval2mb_001.list
 2 interval2mb_001.txt
---% wc -l interval2mb_519.txt
+--% wc -l interval2mb_519.list
 531 interval2mb_519.txt
 ```
 
